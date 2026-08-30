@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --color-black: #000000;
+}
+
+@layer base {
+  body {
+    @apply bg-zinc-950 text-white antialiased selection:bg-blue-500/30 overflow-hidden;
+    overscroll-behavior-y: none;
+  }
+}
+
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 1rem);
+  }
+  
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Hide scrollbar for IE, Edge and Firefox */
+  .hide-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Nexus Social",
+  "description": "A premium, offline-first social media experience supporting seamless global and local network synchronization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
