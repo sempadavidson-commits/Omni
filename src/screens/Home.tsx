@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Bell } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { PostCard } from '../components/PostCard';
-import { SyncIndicator } from '../components/SyncIndicator';
 import { Post } from '../types';
 import { auth } from '../lib/firebase';
 import { globalSyncEngine } from '../sync/sync_engine';
@@ -9,6 +9,7 @@ import { globalSyncEngine } from '../sync/sync_engine';
 export function Home() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const fetchFeed = async () => {
@@ -33,10 +34,8 @@ export function Home() {
 
     fetchFeed();
     
-    // Refresh on auth state change
     const unsubscribe = auth.onAuthStateChanged(() => fetchFeed());
     
-    // Also optimistic update listener
     const handleEvent = (event: any) => {
       if (event.operation === 'CREATE' && event.payload?.targetType === 'POST') {
         const newPost = {
@@ -45,7 +44,6 @@ export function Home() {
           authorId: event.authorId,
           createdAt: event.hlc,
         };
-        // Optimistic UI insert
         setPosts(prev => [newPost, ...prev]);
       }
     };
@@ -55,55 +53,42 @@ export function Home() {
   }, []);
 
   return (
-    <div className="flex flex-col h-full bg-black">
-      {/* Header */}
-      <header className="sticky top-0 z-30 bg-black/80 backdrop-blur-xl border-b border-zinc-900 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-white text-black flex items-center justify-center font-bold text-xl tracking-tighter">
-            N
-          </div>
-          <h1 className="text-xl font-bold tracking-tight text-white hidden sm:block">Nexus</h1>
-        </div>
+    <div className="flex flex-col h-full bg-black relative">
+      {/* Header - Overlays Content */}
+      <header className="absolute top-0 left-0 right-0 z-30 pt-safe px-4 py-4 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent pointer-events-none drop-shadow-md">
+        <button onClick={() => navigate('/search')} className="p-2 text-white pointer-events-auto hover:text-zinc-300 transition-colors drop-shadow-md">
+          <Search size={26} strokeWidth={2.5} />
+        </button>
         
-        <div className="flex items-center gap-4">
-          <SyncIndicator />
-          <button className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
-            <Search size={18} />
+        <div className="flex items-center justify-center gap-5 pointer-events-auto">
+          <button className="text-lg font-bold text-white relative shadow-black drop-shadow-md">
+            For You
+            <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-white"></span>
+          </button>
+          <button className="text-lg font-bold text-white/70 hover:text-white transition-colors drop-shadow-md">
+            Following
           </button>
         </div>
-      </header>
-      
-      {/* Feed Filter / Tabs */}
-      <div className="flex items-center justify-center gap-8 border-b border-zinc-900 sticky top-[61px] z-20 bg-black/90 backdrop-blur-md">
-        <button className="py-3 text-sm font-semibold text-white relative">
-          For You
-          <span className="absolute bottom-0 left-0 w-full h-1 rounded-t-full bg-blue-500"></span>
-        </button>
-        <button className="py-3 text-sm font-medium text-zinc-500 hover:text-zinc-300 transition-colors">
-          Following
-        </button>
-      </div>
 
-      {/* Feed Content */}
-      <main className="flex-1 overflow-y-auto hide-scrollbar pb-24">
-        <div className="pt-2">
-          {loading ? (
-            <div className="text-center py-10 text-zinc-600 text-sm animate-pulse">Loading feed...</div>
-          ) : posts.length > 0 ? (
-            posts.map((post) => (
-              <PostCard key={post.id} post={post} />
-            ))
-          ) : (
-            <div className="text-center py-10 text-zinc-600 text-sm">
-              No posts found. Start the conversation!
-            </div>
-          )}
-          {!loading && posts.length > 0 && (
-            <div className="text-center py-10 text-zinc-600 text-sm">
-              You've caught up for now.
-            </div>
-          )}
+        <div className="w-10">
+          {/* Placeholder to balance the flex space for the Search icon */}
         </div>
+      </header>
+
+      {/* Feed Content - Full screen snap scrolling */}
+      <main className="h-[100dvh] w-full overflow-y-auto snap-y snap-mandatory hide-scrollbar">
+        {loading ? (
+          <div className="h-full flex items-center justify-center text-white text-sm animate-pulse">Loading feed...</div>
+        ) : posts.length > 0 ? (
+          posts.map((post) => (
+            <PostCard key={post.id} post={post} />
+          ))
+        ) : (
+          <div className="h-full flex items-center justify-center flex-col gap-2">
+            <p className="text-zinc-500">No posts found.</p>
+            <p className="text-sm text-zinc-600">Start the conversation!</p>
+          </div>
+        )}
       </main>
     </div>
   );

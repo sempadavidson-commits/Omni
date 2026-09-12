@@ -9,6 +9,9 @@ export const users = pgTable('users', {
   username: text('username').unique(),
   avatar: text('avatar'),
   bio: text('bio'),
+  followersCount: integer('followers_count').default(0),
+  followingCount: integer('following_count').default(0),
+  lastUsernameChangeAt: timestamp('last_username_change_at'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
@@ -41,5 +44,23 @@ export const likes = pgTable('likes', {
   targetId: text('target_id').notNull(),
   targetType: text('target_type').notNull(), // 'POST' or 'COMMENT'
   userId: text('user_id').notNull().references(() => users.uid),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const follows = pgTable('follows', {
+  id: serial('id').primaryKey(),
+  followerId: text('follower_id').notNull().references(() => users.uid),
+  followingId: text('following_id').notNull().references(() => users.uid),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const notifications = pgTable('notifications', {
+  id: serial('id').primaryKey(),
+  recipientId: text('recipient_id').notNull().references(() => users.uid),
+  actorId: text('actor_id').references(() => users.uid),
+  type: text('type').notNull(), // 'FOLLOW', 'LIKE', 'COMMENT', 'REPOST', 'SYSTEM'
+  targetId: text('target_id'), // Post or Comment ID
+  message: text('message'), // For SYSTEM or custom messages
+  isRead: boolean('is_read').default(false),
   createdAt: timestamp('created_at').defaultNow(),
 });

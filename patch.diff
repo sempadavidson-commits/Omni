@@ -1,0 +1,15 @@
+--- src/db/users.ts
++++ src/db/users.ts
+@@ -21,6 +21,12 @@
+   return result[0];
+ }
+ 
++export async function getUserProfile(uid: string) {
++  const result = await db.select().from(users).where(eq(users.uid, uid)).limit(1);
++  if (!result || result.length === 0) return null;
++  return result[0];
++}
++
+ export async function updateUserProfile(uid: string, data: { displayName?: string, username?: string, avatar?: string, bio?: string }) {
+   const existing = await db.select().from(users).where(eq(users.uid, uid)).limit(1);
+   if (!existing || existing.length === 0) throw new Error('User not found');

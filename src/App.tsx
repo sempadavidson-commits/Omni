@@ -10,6 +10,9 @@ import { Messages } from './screens/Messages';
 import { Create } from './screens/Create';
 import { Notifications } from './screens/Notifications';
 import { Profile } from './screens/Profile';
+import { Search } from './screens/Search';
+import { Inbox } from './screens/Inbox';
+import { PostDetail } from './screens/PostDetail';
 
 function Layout() {
   const location = useLocation();
@@ -22,10 +25,14 @@ function Layout() {
         <main className="flex-1 relative h-full">
           <Routes>
             <Route path="/" element={<Home />} />
+            <Route path="/inbox" element={<Inbox />} />
             <Route path="/messages" element={<Messages />} />
             <Route path="/create" element={<Create />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/profile/:id" element={<Profile />} />
+            <Route path="/post/:id" element={<PostDetail />} />
+            <Route path="/search" element={<Search />} />
           </Routes>
         </main>
         

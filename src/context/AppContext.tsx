@@ -21,6 +21,8 @@ interface AppContextType {
   login: (userData?: Partial<User>) => void;
   logout: () => void;
   dispatchEvent: (event: Partial<SocialEvent>) => void;
+  isGlobalMuted: boolean;
+  setIsGlobalMuted: (muted: boolean) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -31,6 +33,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authAction, setAuthAction] = useState<AuthAction | null>(null);
   const [pendingCallback, setPendingCallback] = useState<(() => void) | null>(null);
+  const [isGlobalMuted, setIsGlobalMuted] = useState(true);
   
   const transportRef = useRef(new HttpTransport());
 
@@ -44,9 +47,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           username: user.displayName ? user.displayName.toLowerCase().replace(/\s+/g, '') : 'user_' + user.uid.substring(0, 6),
           displayName: user.displayName || 'New User',
           avatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
-          followers: 0,
-          following: 0,
+          followersCount: 0,
+          followingCount: 0,
         });
+        
+        // Fetch accurate DB user if possible
+        try {
+          const token = await user.getIdToken();
+          const res = await fetch('/api/register', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          const data = await res.json();
+          if (data.dbUser) {
+            setCurrentUser(prev => ({
+              ...prev!,
+              username: data.dbUser.username,
+              avatar: data.dbUser.avatar,
+              displayName: data.dbUser.displayName,
+              bio: data.dbUser.bio,
+              followersCount: data.dbUser.followersCount,
+              followingCount: data.dbUser.followingCount,
+            }));
+          }
+        } catch (e) {}
       } else {
         setCurrentUser(null);
       }
@@ -61,7 +85,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const updateNetworkStatus = () => {
       setSyncState(navigator.onLine ? 'GLOBAL_ONLINE' : 'OFFLINE');
       if (navigator.onLine) {
+        transportRef.current.connect();
         globalSyncEngine.sync();
+      } else {
+        transportRef.current.disconnect();
       }
     };
     
@@ -74,6 +101,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       window.removeEventListener('online', updateNetworkStatus);
       window.removeEventListener('offline', updateNetworkStatus);
+      transportRef.current.disconnect();
     };
   }, []);
 
@@ -103,8 +131,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       username,
       displayName: userData?.displayName || 'New User',
       avatar: userData?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`,
-      followers: 0,
-      following: 0,
+      followersCount: 0,
+      followingCount: 0,
       ...userData
     }));
     
@@ -152,7 +180,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       closeAuthModal,
       login,
       logout,
-      dispatchEvent
+      dispatchEvent,
+      isGlobalMuted,
+      setIsGlobalMuted
     }}>
       {children}
     </AppContext.Provider>

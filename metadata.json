@@ -1,7 +1,11 @@
 {
-  "name": "Nexus Social",
-  "description": "A premium, offline-first social media experience supporting seamless global and local network synchronization.",
-  "requestFramePermissions": [],
+  "name": "Omni",
+  "description": "A polished, production-quality short-form social video platform.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

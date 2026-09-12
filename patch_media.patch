@@ -1,0 +1,62 @@
+--- src/components/PostCard.tsx
++++ src/components/PostCard.tsx
+@@ -1,4 +1,4 @@
+-import React, { useState, useRef, useEffect } from 'react';
++import React, { useState, useRef, useEffect, useCallback } from 'react';
+ import { Heart, MessageCircle, Repeat2, Share, Volume2, VolumeX, Plus } from 'lucide-react';
+ import { formatDistanceToNow } from 'date-fns';
+ import { auth } from '../lib/firebase';
+@@ -32,6 +32,7 @@
+ 
+   // Video state
+   const videoRef = useRef<HTMLVideoElement>(null);
++  const [isPlaying, setIsPlaying] = useState(false);
+ 
+   // Autoplay video logic based on visibility (simplified for prototype)
+   useEffect(() => {
+@@ -40,9 +41,11 @@
+         entries.forEach(entry => {
+           if (entry.isIntersecting) {
+             videoRef.current?.play().catch(() => {});
++            setIsPlaying(true);
+           } else {
+             videoRef.current?.pause();
++            setIsPlaying(false);
+           }
+         });
+       }, { threshold: 0.6 });
+@@ -67,6 +70,25 @@
+       });
+     });
+   };
++
++  const lastTapRef = useRef<number>(0);
++  const handleMediaClick = (e: React.MouseEvent) => {
++    const now = Date.now();
++    const timeSinceLastTap = now - lastTapRef.current;
++    lastTapRef.current = now;
++
++    if (timeSinceLastTap < 300) {
++      // Double tap detected
++      if (!isLiked) handleLike();
++    } else {
++      // Single tap - toggle play/pause
++      if (post.type === 'video' && videoRef.current) {
++        const video = videoRef.current;
++        if (video.paused) { video.play(); setIsPlaying(true); }
++        else { video.pause(); setIsPlaying(false); }
++      }
++    }
++  };
+ 
+   const handleRepost = () => {
+     requireAuth('Repost', 'Create an account to like, comment, repost and follow.', () => {
+@@ -129,7 +151,7 @@
+   return (
+     <article className="w-full h-[100dvh] snap-start relative bg-black flex flex-col justify-end">
+       {/* Full screen media */}
+-      <div className="absolute inset-0 z-0 bg-zinc-900">
++      <div className="absolute inset-0 z-0 bg-zinc-900" onClick={handleMediaClick}>
+         {post.type === 'video' ? (
+           <video 
+             ref={videoRef}

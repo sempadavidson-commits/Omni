@@ -1,0 +1,25 @@
+--- src/screens/Notifications.tsx
++++ src/screens/Notifications.tsx
+@@ -7,7 +7,7 @@
+ import { auth } from '../lib/firebase';
+ import { useAppContext } from '../context/AppContext';
+ 
+-export function Notifications() {
++export function Notifications({ hideHeader }: { hideHeader?: boolean }) {
+   const [notifications, setNotifications] = useState([]);
+   const { currentUser } = useAppContext();
+ 
+@@ -62,9 +62,11 @@
+ 
+   return (
+     <div className="flex flex-col h-full bg-black relative">
+-      <header className="sticky top-0 z-30 bg-black/80 backdrop-blur-xl border-b border-zinc-900 px-4 py-4">
+-        <h1 className="text-xl font-bold text-white tracking-tight">Notifications</h1>
+-      </header>
++      {!hideHeader && (
++        <header className="sticky top-0 z-30 bg-black/80 backdrop-blur-xl border-b border-zinc-900 px-4 py-4">
++          <h1 className="text-xl font-bold text-white tracking-tight">Notifications</h1>
++        </header>
++      )}
+       
+       <main className="flex-1 overflow-y-auto hide-scrollbar pb-24">

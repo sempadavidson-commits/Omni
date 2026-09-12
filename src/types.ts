@@ -6,8 +6,8 @@ export interface User {
   displayName: string;
   avatar: string;
   bio?: string;
-  followers?: number;
-  following?: number;
+  followersCount?: number;
+  followingCount?: number;
 }
 
 export interface Post {
