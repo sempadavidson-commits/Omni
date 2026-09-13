@@ -1,22 +1,41 @@
-import { db } from './index.js';
+import { db, withDbRetry } from './index.js';
 import { users } from './schema.js';
 import { eq } from 'drizzle-orm';
 
 export async function getOrCreateUser(uid: string, email: string, displayName?: string, avatar?: string) {
-  const result = await db.insert(users)
-    .values({
-      uid,
-      email,
-      displayName: displayName || 'New User',
-      username: 'user_' + Math.random().toString(36).substring(2, 8),
-      avatar: avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
-    })
-    .onConflictDoUpdate({
-      target: users.uid,
-      set: { email }, // We only update email on conflict, leaving other profile fields intact
-    })
-    .returning();
-  return result[0];
+  return withDbRetry(async () => {
+    if (!uid) throw new Error('User UID is required');
+    
+    // Check if user already exists
+    const existing = await db.select().from(users).where(eq(users.uid, uid)).limit(1);
+    if (existing && existing.length > 0) {
+      return existing[0];
+    }
+
+    const cleanEmail = email || `user_${uid}@example.com`;
+    const cleanDisplayName = displayName || 'New User';
+    const cleanAvatar = avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`;
+    const cleanUsername = 'user_' + Math.random().toString(36).substring(2, 8) + Math.floor(Math.random() * 1000);
+
+    const inserted = await db.insert(users)
+      .values({
+        uid,
+        email: cleanEmail,
+        displayName: cleanDisplayName,
+        username: cleanUsername,
+        avatar: cleanAvatar,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (inserted && inserted.length > 0) {
+      return inserted[0];
+    }
+
+    // If conflict occurred, re-fetch
+    const fallback = await db.select().from(users).where(eq(users.uid, uid)).limit(1);
+    return fallback[0] || null;
+  });
 }
 
 export async function getUserProfile(uid: string) {

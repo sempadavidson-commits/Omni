@@ -2,12 +2,16 @@ export type SyncState = 'GLOBAL_ONLINE' | 'LOCAL_ONLINE' | 'PEER_AVAILABLE' | 'O
 
 export interface User {
   id: string; // our app's uid
+  uid?: string;
+  email?: string;
   username: string;
   displayName: string;
   avatar: string;
   bio?: string;
   followersCount?: number;
   followingCount?: number;
+  lastUsernameChangeAt?: string;
+  createdAt?: string;
 }
 
 export interface Post {
@@ -17,6 +21,9 @@ export interface Post {
   type: 'text' | 'image' | 'video';
   content: string; // text or url
   caption?: string;
+  tags?: string;
+  visibility?: 'public' | 'followers' | 'private';
+  allowComments?: boolean;
   likesCount: number;
   commentsCount: number;
   repostsCount: number;
@@ -24,6 +31,7 @@ export interface Post {
   viewsCount: number;
   createdAt: string;
   isLikedByMe?: boolean;
+  isBookmarkedByMe?: boolean;
 }
 
 export interface Comment {
@@ -37,19 +45,47 @@ export interface Comment {
   replyCount: number;
 }
 
+export interface Message {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  sender?: User;
+  text: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video' | 'audio';
+  createdAt: string;
+}
+
 export interface Conversation {
   id: string;
-  participantId: string;
-  lastMessage: string;
-  timestamp: string;
-  unreadCount: number;
+  title?: string;
+  isGroup?: boolean;
+  lastMessageText?: string;
+  lastMessageAt?: string;
+  createdAt: string;
+  otherUser?: User;
+  recipient?: User;
+  unreadCount?: number;
 }
 
 export interface AppNotification {
-  id: string;
-  type: 'like' | 'comment' | 'follow' | 'mention';
-  actorId: string;
+  id: string | number;
+  type: 'FOLLOW' | 'LIKE' | 'COMMENT' | 'REPOST' | 'SHARE' | 'SYSTEM';
+  actorId?: string;
+  recipientId: string;
   targetId?: string;
+  message?: string;
   createdAt: string;
-  read: boolean;
+  isRead: boolean;
+  actor?: User;
+}
+
+export interface PostDraft {
+  id: string;
+  caption: string;
+  mediaUrl: string | null;
+  mediaType: 'image' | 'video' | 'text';
+  tags: string;
+  visibility: 'public' | 'followers' | 'private';
+  savedAt: string;
 }

@@ -4,6 +4,7 @@ import { Transport } from '../networking/transport';
 export class SyncEngine {
   private transports: Transport[] = [];
   private outbox: SocialEvent[] = [];
+  private retryCounts: Map<string, number> = new Map();
   private eventLog: Set<string> = new Set(); // For idempotency & replay protection
   private eventListeners: ((event: SocialEvent) => void)[] = [];
   
@@ -66,9 +67,18 @@ export class SyncEngine {
         await bestTransport.send(event);
         // Remove from outbox on successful sync
         this.outbox = this.outbox.filter(e => e.eventId !== event.eventId);
-      } catch (e) {
+        this.retryCounts.delete(event.eventId);
+      } catch (e: any) {
         console.error(`[SyncEngine] Failed to send event ${event.eventId}`, e);
-        // Remains in outbox for next attempt
+        const count = (this.retryCounts.get(event.eventId) || 0) + 1;
+        this.retryCounts.set(event.eventId, count);
+        // Discard if permanently rejected or exceeded retries
+        const isFatal = e?.message && (e.message.includes('HTTP 400') || e.message.includes('HTTP 403') || e.message.includes('HTTP 401'));
+        if (count >= 3 || isFatal) {
+          console.warn(`[SyncEngine] Evicting un-syncable event ${event.eventId} from outbox after ${count} attempts`);
+          this.outbox = this.outbox.filter(e => e.eventId !== event.eventId);
+          this.retryCounts.delete(event.eventId);
+        }
       }
     }
   }

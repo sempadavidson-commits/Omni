@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AppProvider } from './context/AppContext';
 import { BottomNav } from './components/BottomNav';
 import { AuthModal } from './components/AuthModal';
@@ -14,15 +14,14 @@ import { Search } from './screens/Search';
 import { Inbox } from './screens/Inbox';
 import { PostDetail } from './screens/PostDetail';
 
-function Layout() {
-  const location = useLocation();
-  const hideNav = location.pathname === '/create';
+import { Splash } from './components/Splash';
 
+function Layout() {
   return (
     <div className="w-full h-[100dvh] bg-black flex justify-center overflow-hidden">
       {/* Mobile constraint container for web preview */}
-      <div className="w-full h-full max-w-md relative bg-black border-x border-zinc-900/50 shadow-2xl flex flex-col">
-        <main className="flex-1 relative h-full">
+      <div className="w-full h-full max-w-md relative bg-black shadow-2xl flex flex-col">
+        <main className="flex-1 relative h-full min-h-0 overflow-hidden">
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/inbox" element={<Inbox />} />
@@ -36,7 +35,7 @@ function Layout() {
           </Routes>
         </main>
         
-        {!hideNav && <BottomNav />}
+        <BottomNav />
         <AuthModal />
       </div>
     </div>
@@ -44,10 +43,16 @@ function Layout() {
 }
 
 export default function App() {
+  const [showSplash, setShowSplash] = React.useState(true);
+
   return (
     <BrowserRouter>
       <AppProvider>
-        <Layout />
+        {showSplash ? (
+          <Splash onReady={() => setShowSplash(false)} />
+        ) : (
+          <Layout />
+        )}
       </AppProvider>
     </BrowserRouter>
   );

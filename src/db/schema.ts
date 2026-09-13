@@ -21,6 +21,9 @@ export const posts = pgTable('posts', {
   type: text('type').notNull(), // 'text', 'image', 'video'
   content: text('content'),
   caption: text('caption'),
+  tags: text('tags'), // e.g. '#omni,#visuals'
+  visibility: text('visibility').default('public'), // 'public', 'followers', 'private'
+  allowComments: boolean('allow_comments').default(true),
   likesCount: integer('likes_count').default(0),
   commentsCount: integer('comments_count').default(0),
   repostsCount: integer('reposts_count').default(0),
@@ -47,6 +50,13 @@ export const likes = pgTable('likes', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
+export const bookmarks = pgTable('bookmarks', {
+  id: text('id').primaryKey(),
+  postId: text('post_id').notNull().references(() => posts.id),
+  userId: text('user_id').notNull().references(() => users.uid),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
 export const follows = pgTable('follows', {
   id: serial('id').primaryKey(),
   followerId: text('follower_id').notNull().references(() => users.uid),
@@ -62,5 +72,32 @@ export const notifications = pgTable('notifications', {
   targetId: text('target_id'), // Post or Comment ID
   message: text('message'), // For SYSTEM or custom messages
   isRead: boolean('is_read').default(false),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const conversations = pgTable('conversations', {
+  id: text('id').primaryKey(), // e.g. conv_...
+  title: text('title'),
+  isGroup: boolean('is_group').default(false),
+  lastMessageText: text('last_message_text'),
+  lastMessageAt: timestamp('last_message_at').defaultNow(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const conversationMembers = pgTable('conversation_members', {
+  id: serial('id').primaryKey(),
+  conversationId: text('conversation_id').notNull().references(() => conversations.id),
+  userId: text('user_id').notNull().references(() => users.uid),
+  lastReadAt: timestamp('last_read_at').defaultNow(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const messages = pgTable('messages', {
+  id: text('id').primaryKey(), // msg_...
+  conversationId: text('conversation_id').notNull().references(() => conversations.id),
+  senderId: text('sender_id').notNull().references(() => users.uid),
+  text: text('text').notNull(),
+  mediaUrl: text('media_url'),
+  mediaType: text('media_type'), // 'image', 'video', 'audio'
   createdAt: timestamp('created_at').defaultNow(),
 });

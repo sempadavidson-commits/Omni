@@ -17,6 +17,9 @@ export const createPool = () => {
       database: process.env.SQL_DB_NAME,
       max: 10,
       connectionTimeoutMillis: 15000,
+      idleTimeoutMillis: 30000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
     });
 
     global._postgresPool.on('error', (err) => {
@@ -29,3 +32,41 @@ export const createPool = () => {
 const pool = createPool();
 
 export const db = drizzle(pool, { schema });
+
+export async function withDbRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 250): Promise<T> {
+  let lastError: any;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      const combinedMsg = [
+        err?.message,
+        err?.cause?.message,
+        err?.cause?.code,
+        err?.code,
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      const isConnectionError =
+        combinedMsg.includes('connection terminated') ||
+        combinedMsg.includes('closed') ||
+        combinedMsg.includes('econnreset') ||
+        combinedMsg.includes('timeout') ||
+        combinedMsg.includes('broken pipe') ||
+        combinedMsg.includes('socket') ||
+        combinedMsg.includes('client has encountered a connection error') ||
+        combinedMsg.includes('57p01') ||
+        combinedMsg.includes('08006') ||
+        combinedMsg.includes('08003') ||
+        combinedMsg.includes('08001');
+
+      if (isConnectionError && i < retries) {
+        console.warn(`[DB Retry] Retrying query after connection glitch (${i + 1}/${retries})...`);
+        await new Promise((res) => setTimeout(res, delayMs * (i + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}

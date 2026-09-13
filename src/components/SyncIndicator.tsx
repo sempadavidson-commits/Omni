@@ -27,7 +27,7 @@ export function SyncIndicator() {
 
   return (
     <div className={cn(
-      "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium tracking-wide uppercase transition-all duration-300 border border-transparent",
+      "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium tracking-wide uppercase transition-all duration-300 border-transparent",
       config.color,
       config.bg,
       "border-current/20"
