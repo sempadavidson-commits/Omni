@@ -89,7 +89,7 @@ export function Search() {
       } finally {
         setLoading(false);
       }
-    }, 280);
+    }, 40);
 
     return () => clearTimeout(timer);
   }, [query, activeTab]);

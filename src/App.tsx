@@ -13,6 +13,7 @@ import { Profile } from './screens/Profile';
 import { Search } from './screens/Search';
 import { Inbox } from './screens/Inbox';
 import { PostDetail } from './screens/PostDetail';
+import { Live } from './screens/Live';
 
 import { Splash } from './components/Splash';
 
@@ -25,13 +26,18 @@ function Layout() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/inbox" element={<Inbox />} />
+            <Route path="/inbox/activity" element={<Inbox />} />
+            <Route path="/inbox/messages" element={<Inbox />} />
             <Route path="/messages" element={<Messages />} />
+            <Route path="/messages/:id" element={<Messages />} />
             <Route path="/create" element={<Create />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:id" element={<Profile />} />
             <Route path="/post/:id" element={<PostDetail />} />
+            <Route path="/live" element={<Live />} />
             <Route path="/search" element={<Search />} />
+            <Route path="/settings" element={<Profile />} />
           </Routes>
         </main>
         

@@ -24,6 +24,8 @@ export const posts = pgTable('posts', {
   tags: text('tags'), // e.g. '#omni,#visuals'
   visibility: text('visibility').default('public'), // 'public', 'followers', 'private'
   allowComments: boolean('allow_comments').default(true),
+  isPinned: boolean('is_pinned').default(false),
+  thumbnailUrl: text('thumbnail_url'),
   likesCount: integer('likes_count').default(0),
   commentsCount: integer('comments_count').default(0),
   repostsCount: integer('reposts_count').default(0),

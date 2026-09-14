@@ -10,6 +10,12 @@ export interface User {
   bio?: string;
   followersCount?: number;
   followingCount?: number;
+  following?: string[];
+  isFriend?: boolean;
+  isFollowing?: boolean;
+  isFollowedBy?: boolean;
+  isFollowedByMe?: boolean;
+  isFollowingMe?: boolean;
   lastUsernameChangeAt?: string;
   createdAt?: string;
 }
@@ -18,6 +24,7 @@ export interface Post {
   id: string;
   authorId: string;
   author?: User; // attached in feed
+  repostedBy?: User; // if shown as repost in feed
   type: 'text' | 'image' | 'video';
   content: string; // text or url
   caption?: string;
@@ -29,9 +36,41 @@ export interface Post {
   repostsCount: number;
   sharesCount: number;
   viewsCount: number;
+  bookmarksCount?: number;
+  savesCount?: number;
   createdAt: string;
   isLikedByMe?: boolean;
   isBookmarkedByMe?: boolean;
+  isFollowedByMe?: boolean;
+  isPinned?: boolean;
+  thumbnailUrl?: string;
+  isUploading?: boolean;
+  uploadProgress?: number;
+}
+
+export interface BackgroundDownloadTask {
+  id: string;
+  postId: string;
+  videoUrl: string;
+  filename: string;
+  progress: number;
+  status: 'downloading' | 'completed' | 'error';
+  error?: string;
+}
+
+export interface BackgroundUploadTask {
+  id: string;
+  previewUrl: string;
+  mediaType: 'video' | 'image' | 'text';
+  caption: string;
+  tags?: string[];
+  visibility?: string;
+  allowComments?: boolean;
+  progress: number;
+  status: 'uploading' | 'processing' | 'completed' | 'error';
+  error?: string;
+  createdAt: string;
+  resultPostId?: string;
 }
 
 export interface Comment {
@@ -52,14 +91,73 @@ export interface Message {
   sender?: User;
   text: string;
   mediaUrl?: string;
-  mediaType?: 'image' | 'video' | 'audio';
+  mediaType?: 'image' | 'video' | 'audio' | 'document' | 'file';
+  fileName?: string;
+  fileSize?: string;
   createdAt: string;
+}
+
+export interface LiveParticipant {
+  id: string;
+  username: string;
+  displayName: string;
+  avatar: string;
+  role: 'host' | 'guest' | 'viewer';
+  isMuted: boolean;
+  isVideoEnabled: boolean;
+  joinedAt: string;
+}
+
+export interface LiveMessage {
+  id: string;
+  liveId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  avatar: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface LiveSession {
+  id: string;
+  hostId: string;
+  host: User;
+  title: string;
+  category: string;
+  beautyFilter?: string;
+  isLive: boolean;
+  viewersCount: number;
+  likesCount: number;
+  guests: LiveParticipant[];
+  startedAt: string;
+  endedAt?: string;
+}
+
+export interface UserLiveStats {
+  livesDid: number;
+  totalLiveViews: number;
+  totalLiveLikes: number;
+  totalLiveDurationSec: number;
+  milestones: LiveMilestone[];
+}
+
+export interface LiveMilestone {
+  id: string;
+  title: string;
+  description: string;
+  iconName: string;
+  isUnlocked: boolean;
+  progress: number;
+  target: number;
+  unlockedAt?: string;
 }
 
 export interface Conversation {
   id: string;
   title?: string;
   isGroup?: boolean;
+  lastMessage?: string;
   lastMessageText?: string;
   lastMessageAt?: string;
   createdAt: string;

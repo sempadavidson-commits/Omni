@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Search, Compass, Users, Video, RefreshCw } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Search, Compass, Users, Video, RefreshCw, Radio } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PostCard } from '../components/PostCard';
 import { FeedCardSkeleton } from '../components/OmniSkeleton';
 import { Post } from '../types';
@@ -10,7 +10,9 @@ import { globalSyncEngine } from '../sync/sync_engine';
 import { cn } from '../lib/utils';
 
 export function Home() {
-  const [activeTab, setActiveTab] = useState<'foryou' | 'following'>('foryou');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = searchParams.get('tab') === 'following' ? 'following' : 'foryou';
+  const [activeTab, setActiveTab] = useState<'foryou' | 'following'>(initialTab);
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -21,40 +23,62 @@ export function Home() {
   const { currentUser, requireAuth } = useAppContext();
   const navigate = useNavigate();
 
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'following' && activeTab !== 'following') {
+      setActiveTab('following');
+    } else if (tabParam === 'foryou' && activeTab !== 'foryou') {
+      setActiveTab('foryou');
+    }
+  }, [searchParams]);
+
   const containerRef = useRef<HTMLDivElement>(null);
 
   const fetchFeed = useCallback(async (tab: 'foryou' | 'following', pageToFetch: number, isAppend: boolean = false) => {
+    let retries = 3;
     try {
-      const headers: Record<string, string> = {};
-      if (auth.currentUser) {
-        const token = await auth.currentUser.getIdToken();
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      
-      const res = await fetch(`/api/feed?tab=${tab}&page=${pageToFetch}&limit=10`, { headers });
-      if (res.ok) {
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          const data = await res.json();
-          const incoming: Post[] = Array.isArray(data) ? data : [];
-          if (isAppend) {
-            setPosts(prev => {
-              const existingIds = new Set(prev.map(p => p.id));
-              const newUnique = incoming.filter(p => !existingIds.has(p.id));
-              return [...prev, ...newUnique];
-            });
-          } else {
-            setPosts(incoming);
+      while (retries > 0) {
+        try {
+          const headers: Record<string, string> = {};
+          if (auth.currentUser) {
+            try {
+              const token = await auth.currentUser.getIdToken();
+              headers['Authorization'] = `Bearer ${token}`;
+            } catch (tokenErr) {}
           }
-          setHasMore(incoming.length >= 10);
-          setPage(pageToFetch);
-        } else {
-          if (!isAppend) setPosts([]);
-          setHasMore(false);
+          
+          const res = await fetch(`/api/feed?tab=${tab}&page=${pageToFetch}&limit=10`, { headers });
+          if (res.ok) {
+            const contentType = res.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+              const data = await res.json();
+              const incoming: Post[] = Array.isArray(data) ? data : [];
+              if (isAppend) {
+                setPosts(prev => {
+                  const existingIds = new Set(prev.map(p => p.id));
+                  const newUnique = incoming.filter(p => !existingIds.has(p.id));
+                  return [...prev, ...newUnique];
+                });
+              } else {
+                setPosts(incoming);
+              }
+              setHasMore(incoming.length >= 10);
+              setPage(pageToFetch);
+            } else {
+              if (!isAppend) setPosts([]);
+              setHasMore(false);
+            }
+            break; // Exit retry loop on success
+          }
+        } catch (err) {
+          retries--;
+          if (retries === 0) {
+            console.warn('Could not fetch feed after retries:', err);
+          } else {
+            await new Promise(r => setTimeout(r, 400));
+          }
         }
       }
-    } catch (err) {
-      console.error('Failed to fetch feed:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -139,6 +163,42 @@ export function Home() {
     }
   };
 
+  // Live followed users tracking for top button
+  const [followedLiveUsers, setFollowedLiveUsers] = useState<any[]>([]);
+  const [activeLiveUserIndex, setActiveLiveUserIndex] = useState(0);
+
+  useEffect(() => {
+    // Check if any followed users are currently live
+    let isMounted = true;
+    (async () => {
+      try {
+        if (!currentUser) return;
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) return;
+        const res = await fetch(`/api/user/${currentUser.id}/following`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok && isMounted) {
+          const list = await res.json();
+          if (Array.isArray(list)) {
+            const liveOnly = list.filter((u: any) => u.isLive);
+            setFollowedLiveUsers(liveOnly);
+          }
+        }
+      } catch (e) {}
+    })();
+    return () => { isMounted = false; };
+  }, [currentUser]);
+
+  // Alternate between followed live users if multiple are live
+  useEffect(() => {
+    if (followedLiveUsers.length <= 1) return;
+    const interval = setInterval(() => {
+      setActiveLiveUserIndex((prev) => (prev + 1) % followedLiveUsers.length);
+    }, 3500);
+    return () => clearInterval(interval);
+  }, [followedLiveUsers]);
+
   const handleTabChange = (tab: 'foryou' | 'following') => {
     if (tab === 'following' && !currentUser) {
       requireAuth('Following Feed', 'Sign in to view posts from creators you follow.', () => {
@@ -153,6 +213,10 @@ export function Home() {
     }
   };
 
+  const handleHidePost = (postId: string) => {
+    setPosts(prev => prev.filter(p => p.id !== postId));
+  };
+
   return (
     <div className="flex flex-col h-full w-full bg-[#07080c] relative overflow-hidden">
       {/* Omni Top Navigation Header (Overlaid on Media) */}
@@ -161,12 +225,12 @@ export function Home() {
         <button
           onClick={() => navigate('/search')}
           aria-label="Search and Explore"
-          className="pointer-events-auto p-2.5 rounded-full bg-white/10 hover:bg-white/[0.15] text-white hover:text-cyan-400 transition-colors active:scale-95 shadow-lg"
+          className="pointer-events-auto p-2.5 rounded-full bg-black/30 hover:bg-black/50 text-white hover:text-cyan-400 transition-colors active:scale-95 shadow-md"
         >
           <Search size={20} strokeWidth={2.2} />
         </button>
 
-        {/* Center: Real Following & For You Tabs */}
+        {/* Center: Following & For You Tabs */}
         <div className="pointer-events-auto flex items-center justify-center gap-6">
           <button
             onClick={() => handleTabChange('following')}
@@ -199,17 +263,38 @@ export function Home() {
           </button>
         </div>
 
-        {/* Right: Quick Refresh */}
-        <button
-          onClick={() => {
-            setRefreshing(true);
-            fetchFeed(activeTab, 0, false);
-          }}
-          aria-label="Refresh Feed"
-          className="pointer-events-auto p-2.5 rounded-full bg-white/10 hover:bg-white/[0.15] text-white hover:text-cyan-400 transition-colors active:scale-95 shadow-lg"
-        >
-          <RefreshCw size={18} strokeWidth={2.2} className={cn(refreshing && "animate-spin text-cyan-400")} />
-        </button>
+        {/* Right: Functional LIVE Section Button (SVG, No border, No glow unless friend/followed is live) */}
+        {followedLiveUsers.length > 0 ? (
+          <button
+            onClick={() => navigate('/live')}
+            aria-label="Live Broadcasts"
+            className="pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-600 text-white hover:bg-rose-500 transition-all active:scale-95 shadow-[0_0_12px_rgba(244,63,94,0.5)] animate-in fade-in duration-300"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-80" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
+            </span>
+            <img
+              src={followedLiveUsers[activeLiveUserIndex]?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=live'}
+              alt="Live user"
+              className="w-4 h-4 rounded-full object-cover shrink-0"
+            />
+            <span className="text-xs font-bold truncate max-w-[80px]">
+              {followedLiveUsers[activeLiveUserIndex]?.displayName || followedLiveUsers[activeLiveUserIndex]?.username}
+            </span>
+          </button>
+        ) : (
+          <button
+            onClick={() => navigate('/live')}
+            aria-label="Live Broadcasts"
+            className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/40 text-slate-200 hover:text-white hover:bg-black/60 transition-colors active:scale-95"
+          >
+            <Radio size={16} className="text-slate-300" />
+            <span className="text-xs font-semibold tracking-wider uppercase">
+              Live
+            </span>
+          </button>
+        )}
       </header>
 
       {/* Main Snap Scroll Viewport with Full-Screen Height and Mandatory Snap Points */}
@@ -232,6 +317,7 @@ export function Home() {
                 post={post}
                 isActive={idx === activeIndex}
                 compact={false}
+                onHidePost={handleHidePost}
               />
             </div>
           ))

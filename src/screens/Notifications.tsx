@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Heart, UserPlus, MessageCircle, Repeat2, Share2, Bell, Sparkles } from 'lucide-react';
+import { Heart, UserPlus, MessageCircle, Repeat2, Share2, Bell } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -51,6 +51,8 @@ export function Notifications({ hideHeader }: { hideHeader?: boolean } = {}) {
         return <UserPlus size={13} className="text-indigo-400" />;
       case 'COMMENT':
         return <MessageCircle size={13} className="text-emerald-400 fill-emerald-400" />;
+      case 'MESSAGE':
+        return <MessageCircle size={13} className="text-cyan-400 fill-cyan-400" />;
       case 'REPOST':
         return <Repeat2 size={13} className="text-emerald-400" />;
       case 'SHARE':
@@ -65,6 +67,7 @@ export function Notifications({ hideHeader }: { hideHeader?: boolean } = {}) {
       case 'LIKE': return 'liked your post.';
       case 'FOLLOW': return 'started following you.';
       case 'COMMENT': return 'commented on your video.';
+      case 'MESSAGE': return 'sent you a message.';
       case 'REPOST': return 'reposted your video.';
       case 'SHARE': return 'shared your video.';
       default: return 'interacted with your profile.';
@@ -106,17 +109,19 @@ export function Notifications({ hideHeader }: { hideHeader?: boolean } = {}) {
               <div
                 key={notifId}
                 onClick={() => {
-                  if (targetPostId) {
+                  if (notifType === 'MESSAGE' && actor?.id) {
+                    navigate(`/messages?user=${actor.id}&name=${encodeURIComponent(actor.displayName || '')}&username=${encodeURIComponent(actor.username || '')}&avatar=${encodeURIComponent(actor.avatar || '')}`);
+                  } else if (targetPostId) {
                     navigate(`/post/${targetPostId}`);
                   } else if (actor?.id) {
                     navigate(`/profile/${actor.id}`);
                   }
                 }}
                 className={cn(
-                  "flex items-start gap-3.5 p-3 rounded-2xl mb-1.5 transition-colors cursor-pointer border",
+                  "flex items-start gap-3.5 p-3 rounded-2xl mb-1.5 transition-colors cursor-pointer",
                   !isRead
-                    ? "bg-cyan-500/[0.06]  hover:bg-cyan-500/[0.1]"
-                    : "bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.05]"
+                    ? "bg-cyan-500/[0.08] hover:bg-cyan-500/[0.12]"
+                    : "bg-white/[0.02] hover:bg-white/[0.05]"
                 )}
               >
                 <div className="relative pt-0.5 shrink-0">

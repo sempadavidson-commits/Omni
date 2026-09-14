@@ -1,12 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import { Messages } from './Messages';
 import { Notifications } from './Notifications';
 import { useAppContext } from '../context/AppContext';
 import { cn } from '../lib/utils';
 
 export function Inbox() {
-  const [tab, setTab] = useState<'notifications' | 'messages'>('notifications');
-  const { currentUser, requireAuth, unreadInboxCount } = useAppContext();
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const initialTab = (searchParams.get('tab') === 'messages' || location.pathname.includes('/messages')) ? 'messages' : 'notifications';
+  const [tab, setTab] = useState<'notifications' | 'messages'>(initialTab);
+  const { currentUser, requireAuth } = useAppContext();
+
+  useEffect(() => {
+    if (searchParams.get('tab') === 'messages' || location.pathname.includes('/messages')) {
+      setTab('messages');
+    }
+  }, [searchParams, location.pathname]);
 
   if (!currentUser) {
     return (

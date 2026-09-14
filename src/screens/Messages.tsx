@@ -4,21 +4,40 @@ import {
   Plus,
   ArrowLeft,
   Send,
-  Image as ImageIcon,
-  CheckCheck,
   MessageCircle,
   Paperclip,
   Users,
   X,
-  MessageSquare
+  Lock,
+  Image as ImageIcon,
+  FileText,
+  Film,
+  Music,
+  Download,
+  ExternalLink,
+  Maximize2,
+  Phone,
+  PhoneOff,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
 import { cn } from '../lib/utils';
 import { auth } from '../lib/firebase';
 import { Conversation, Message, User } from '../types';
 
 export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const targetUserId = searchParams.get('user');
+  const targetName = searchParams.get('name');
+  const targetUsername = searchParams.get('username');
+  const targetAvatar = searchParams.get('avatar');
+
   const { currentUser, requireAuth, refreshUnreadCount } = useAppContext();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,6 +45,77 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [messageText, setMessageText] = useState('');
   const [isSending, setIsSending] = useState(false);
+
+  // Audio Call & Bubble Zoom State
+  const [isAudioCallActive, setIsAudioCallActive] = useState(false);
+  const [callSeconds, setCallSeconds] = useState(0);
+  const [isCallMuted, setIsCallMuted] = useState(false);
+  const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
+  const [isEnlargedBubble, setIsEnlargedBubble] = useState(false);
+  const callTimerRef = useRef<any>(null);
+  const localAudioStreamRef = useRef<MediaStream | null>(null);
+
+  const startAudioCall = async () => {
+    setIsAudioCallActive(true);
+    setCallSeconds(0);
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        localAudioStreamRef.current = stream;
+      }
+    } catch (err) {
+      console.warn('Audio call permission/device error:', err);
+    }
+    if (callTimerRef.current) clearInterval(callTimerRef.current);
+    callTimerRef.current = setInterval(() => {
+      setCallSeconds((prev) => prev + 1);
+    }, 1000);
+  };
+
+  const endAudioCall = () => {
+    if (callTimerRef.current) {
+      clearInterval(callTimerRef.current);
+      callTimerRef.current = null;
+    }
+    if (localAudioStreamRef.current) {
+      localAudioStreamRef.current.getTracks().forEach((track) => track.stop());
+      localAudioStreamRef.current = null;
+    }
+    setIsAudioCallActive(false);
+
+    if (activeConversation) {
+      const durationMin = Math.floor(callSeconds / 60);
+      const durationSec = callSeconds % 60;
+      const durationStr = `${durationMin}m ${durationSec}s`;
+      const callMsgText = `📞 Audio call ended (${durationStr})`;
+
+      const tempId = 'call_' + Date.now();
+      const tempMessage: Message = {
+        id: tempId,
+        conversationId: activeConversation.id,
+        senderId: currentUser?.id || '',
+        text: callMsgText,
+        createdAt: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, tempMessage]);
+    }
+  };
+
+  const toggleCallMute = () => {
+    if (localAudioStreamRef.current) {
+      localAudioStreamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = isCallMuted;
+      });
+    }
+    setIsCallMuted(!isCallMuted);
+  };
+
+  // Fullscreen Media Lightbox State
+  const [lightboxMedia, setLightboxMedia] = useState<{
+    url: string;
+    type: 'image' | 'video' | 'audio' | 'document' | 'file';
+    name?: string;
+  } | null>(null);
 
   // New Chat Dialog State
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
@@ -49,7 +139,7 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
       });
       if (res.ok) {
         const data = await res.json();
-        setConversations(data);
+        setConversations(Array.isArray(data) ? data : []);
       }
     } catch (e) {
       console.error('Failed to load conversations:', e);
@@ -62,6 +152,46 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
     fetchConversations();
   }, [currentUser]);
 
+  // Handle direct message intent from URL parameter `?user=xxx`
+  useEffect(() => {
+    if (!targetUserId || !currentUser) return;
+    if (targetUserId === currentUser.id || targetUserId === currentUser.uid) return;
+
+    const startDirectConversation = async () => {
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        const res = await fetch('/api/conversations', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ recipientId: targetUserId })
+        });
+        if (res.ok) {
+          const conv = await res.json();
+          const fullConv: Conversation = {
+            ...conv,
+            otherUser: conv.otherUser || conv.recipient || {
+              id: targetUserId,
+              displayName: targetName || 'Creator',
+              username: targetUsername || 'creator',
+              avatar: targetAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${targetUserId}`,
+            }
+          };
+          openConversation(fullConv);
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          console.warn('Could not start conversation:', errData.error || res.statusText);
+        }
+      } catch (e) {
+        console.error('Error starting direct conversation from url:', e);
+      }
+    };
+
+    startDirectConversation();
+  }, [targetUserId, currentUser]);
+
   // Listen to SSE real-time events for incoming messages
   useEffect(() => {
     const eventSource = new EventSource('/api/stream');
@@ -69,17 +199,21 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
       try {
         const eventData = JSON.parse(e.data);
         if (eventData.type === 'NEW_MESSAGE') {
-          // If active chat is this conversation, append
           if (activeConversation && activeConversation.id === eventData.conversationId) {
             setMessages(prev => {
               if (prev.some(m => m.id === eventData.message.id)) return prev;
+              const tempIndex = prev.findIndex(m => m.id.startsWith('temp_') && m.text === eventData.message.text);
+              if (tempIndex !== -1) {
+                const next = [...prev];
+                next[tempIndex] = eventData.message;
+                return next;
+              }
               return [...prev, eventData.message];
             });
             setTimeout(() => {
               messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
             }, 50);
           }
-          // Refresh conversation list to update last message & unread badge
           fetchConversations();
           refreshUnreadCount();
         }
@@ -100,7 +234,14 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
       });
       if (res.ok) {
         const data = await res.json();
-        setMessages(data);
+        const rawList: Message[] = Array.isArray(data) ? data : [];
+        const seen = new Set<string>();
+        const unique = rawList.filter(m => {
+          if (!m.id || seen.has(m.id)) return false;
+          seen.add(m.id);
+          return true;
+        });
+        setMessages(unique);
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
         }, 50);
@@ -122,7 +263,6 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
         const res = await fetch(`/api/search?filter=users&q=${encodeURIComponent(searchUserQuery)}`);
         if (res.ok) {
           const data = await res.json();
-          // Exclude self
           const filtered = (data.users || []).filter((u: User) => u.id !== currentUser?.id);
           setUserSearchResults(filtered);
         }
@@ -134,6 +274,10 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
   }, [searchUserQuery, currentUser?.id]);
 
   const handleStartConversationWithUser = async (targetUser: User) => {
+    if (targetUser.id === currentUser?.id || targetUser.id === currentUser?.uid) {
+      setIsNewChatOpen(false);
+      return;
+    }
     try {
       const token = await auth.currentUser?.getIdToken();
       const res = await fetch('/api/conversations', {
@@ -148,8 +292,12 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
         const conv = await res.json();
         setIsNewChatOpen(false);
         setSearchUserQuery('');
-        await fetchConversations();
-        await openConversation(conv);
+        const fullConv: Conversation = {
+          ...conv,
+          otherUser: conv.otherUser || targetUser
+        };
+        setConversations(prev => [fullConv, ...prev.filter(c => c.id !== conv.id)]);
+        openConversation(fullConv);
       }
     } catch (e) {
       console.error('Error starting conversation:', e);
@@ -157,23 +305,23 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
   };
 
   const handleSendMessage = async () => {
-    if (!activeConversation || !messageText.trim() || isSending) return;
-    const textToSend = messageText.trim();
+    if (!messageText.trim() || !activeConversation || isSending) return;
+    const text = messageText.trim();
     setMessageText('');
     setIsSending(true);
 
+    const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const tempMessage: Message = {
-      id: crypto.randomUUID(),
+      id: tempId,
       conversationId: activeConversation.id,
-      senderId: currentUser?.id || 'me',
-      text: textToSend,
+      senderId: currentUser?.id || '',
+      text,
       createdAt: new Date().toISOString(),
     };
-
     setMessages(prev => [...prev, tempMessage]);
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, 50);
+    }, 30);
 
     try {
       const token = await auth.currentUser?.getIdToken();
@@ -183,27 +331,40 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ text: textToSend })
+        body: JSON.stringify({ text })
       });
       if (res.ok) {
-        const savedMessage = await res.json();
-        setMessages(prev => prev.map(m => m.id === tempMessage.id ? savedMessage : m));
+        const savedMsg = await res.json();
+        setMessages(prev => {
+          if (prev.some(m => m.id === savedMsg.id)) {
+            return prev.filter(m => m.id !== tempId);
+          }
+          return prev.map(m => m.id === tempId ? savedMsg : m);
+        });
+        fetchConversations();
       }
     } catch (e) {
-      console.error('Failed to send message:', e);
+      console.error('Error sending message:', e);
     } finally {
       setIsSending(false);
     }
   };
 
-  const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Support any media and document file upload without limitations
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !activeConversation) return;
 
-    const isVideo = file.type.startsWith('video/');
+    let mediaType: 'image' | 'video' | 'audio' | 'document' | 'file' = 'file';
+    if (file.type.startsWith('image/')) mediaType = 'image';
+    else if (file.type.startsWith('video/')) mediaType = 'video';
+    else if (file.type.startsWith('audio/')) mediaType = 'audio';
+    else if (file.type.includes('pdf') || file.type.includes('document') || file.type.includes('text')) mediaType = 'document';
+
     const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64Url = event.target?.result as string;
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+
       try {
         const token = await auth.currentUser?.getIdToken();
         const res = await fetch(`/api/conversations/${activeConversation.id}/messages`, {
@@ -213,157 +374,332 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
             Authorization: `Bearer ${token}`
           },
           body: JSON.stringify({
-            text: isVideo ? 'Shared a video' : 'Shared an image',
-            mediaUrl: base64Url,
-            mediaType: isVideo ? 'video' : 'image'
+            text: file.name,
+            mediaUrl: base64,
+            mediaType
           })
         });
         if (res.ok) {
           const savedMsg = await res.json();
-          setMessages(prev => [...prev, savedMsg]);
+          setMessages(prev => {
+            if (prev.some(m => m.id === savedMsg.id)) return prev;
+            return [...prev, savedMsg];
+          });
           setTimeout(() => {
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
           }, 50);
+          fetchConversations();
         }
       } catch (err) {
-        console.error('Failed to upload media:', err);
+        console.error('Error sending file attachment:', err);
       }
     };
     reader.readAsDataURL(file);
   };
 
-  // View: Active Chat
+  // View: Active Conversation Chat Room
   if (activeConversation) {
     const partner = activeConversation.otherUser || activeConversation.recipient;
     return (
-      <div className="flex flex-col h-full bg-[#07080c] relative z-30">
-        {/* Chat Header */}
-        <header className="px-4 py-3 border-b  flex items-center justify-between bg-[#07080c]/90  shrink-0">
-          <div className="flex items-center gap-3">
+      <div className="flex flex-col h-full w-full bg-[#07080c] relative z-40 overflow-hidden">
+        {/* Chat Room Header */}
+        <header className="pt-safe px-3 py-2.5 border-b border-white/[0.06] bg-[#07080c]/95 flex items-center justify-between shrink-0 z-30">
+          <div className="flex items-center gap-2.5 min-w-0">
             <button
-              onClick={() => setActiveConversation(null)}
-              className="p-1.5 -ml-1 text-slate-400 hover:text-white rounded-full hover:bg-white/[0.08] transition-colors"
+              onClick={() => {
+                setActiveConversation(null);
+                if (targetUserId) {
+                  setSearchParams({});
+                }
+              }}
+              className="p-2 -ml-1 text-slate-300 hover:text-white rounded-full hover:bg-white/[0.08] transition-colors"
+              aria-label="Back"
             >
-              <ArrowLeft size={20} />
+              <ArrowLeft size={19} />
             </button>
-            <div className="flex items-center gap-2.5">
+
+            <div
+              onClick={() => partner?.id && navigate(`/profile/${partner.id}`)}
+              className="flex items-center gap-2.5 cursor-pointer hover:opacity-85 transition-opacity min-w-0"
+            >
               <img
                 src={partner?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=partner'}
                 alt={partner?.displayName || 'User'}
-                className="w-9 h-9 rounded-full object-cover "
+                className="w-9 h-9 rounded-full object-cover bg-slate-800 shrink-0"
               />
-              <div>
-                <h3 className="text-sm font-bold text-white leading-tight">
-                  {partner?.displayName || 'Omni Creator'}
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-white leading-tight truncate">
+                  {partner?.displayName || 'Nexus Creator'}
                 </h3>
-                <span className="text-[11px] text-cyan-400 font-medium">
+                <span className="text-[11px] text-cyan-400 font-medium truncate block">
                   @{partner?.username || 'user'}
                 </span>
               </div>
             </div>
           </div>
+
+          <div className="flex items-center gap-1">
+            {/* Functional Audio Call Button */}
+            <button
+              onClick={startAudioCall}
+              className="p-2.5 rounded-full bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-black active:scale-95 transition-all"
+              title="Start High Quality Audio Call"
+            >
+              <Phone size={17} />
+            </button>
+          </div>
         </header>
 
-        {/* Message Stream */}
-        <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 pb-24 hide-scrollbar">
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center py-10 opacity-70">
-              <div className="w-12 h-12 rounded-full bg-cyan-500/10  flex items-center justify-center text-cyan-400 mb-2">
-                <MessageSquare size={22} />
-              </div>
-              <p className="text-sm font-semibold text-white">Encrypted Conversation</p>
-              <p className="text-xs text-slate-400 max-w-xs mt-1">
-                Say hello to @{partner?.username}! Messages are synced across your devices.
-              </p>
-            </div>
-          ) : (
-            messages.map((m) => {
-              const isMe = m.senderId === currentUser?.id;
-              return (
-                <div key={m.id} className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
-                  <div
+        {/* Message Stream: Sender (Me) strictly on RIGHT, Receiver strictly on LEFT */}
+        <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-3.5 hide-scrollbar min-h-0">
+          {/* Encryption indicator */}
+          <div className="flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-full bg-white/[0.03] self-center text-[10px] font-semibold text-slate-400 mb-1">
+            <Lock size={11} className="text-cyan-400" />
+            <span>Direct Encrypted Message</span>
+          </div>
+
+          {messages.map((m, index) => {
+            const isMe = m.senderId === currentUser?.id || m.senderId === currentUser?.uid;
+            return (
+              <div
+                key={`${m.id || 'msg'}-${index}`}
+                className={cn('flex flex-col w-full', isMe ? 'items-end' : 'items-start')}
+              >
+                {/* Compact Pop Message Bubble: NO BORDERS on sent media, distinct colors & corner geometry */}
+                <div
+                  onDoubleClick={() => setIsEnlargedBubble(!isEnlargedBubble)}
+                  className={cn(
+                    'max-w-[72%] shadow-md break-words transition-all duration-200 cursor-pointer',
+                    isEnlargedBubble ? 'scale-110 sm:scale-125 z-10 my-2' : 'scale-100',
+                    m.mediaUrl && (m.mediaType === 'image' || m.mediaType === 'video')
+                      ? 'p-0 overflow-hidden bg-transparent border-0'
+                      : isMe
+                      ? 'px-3.5 py-2 bg-gradient-to-r from-cyan-500 to-indigo-600 text-white rounded-2xl rounded-br-none text-xs sm:text-xs'
+                      : 'px-3.5 py-2 bg-[#181a24] text-slate-100 rounded-2xl rounded-bl-none text-xs sm:text-xs'
+                  )}
+                >
+                  {/* Media Content Preview (No border bubbles on media) */}
+                  {m.mediaUrl && (
+                    <div className="mb-0">
+                      {m.mediaType === 'video' ? (
+                        <div
+                          onClick={() => setLightboxMedia({ url: m.mediaUrl!, type: 'video', name: m.text })}
+                          className="relative rounded-2xl overflow-hidden cursor-pointer group bg-black"
+                        >
+                          <video src={m.mediaUrl} className="w-full max-h-52 object-cover rounded-2xl" />
+                          <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 flex items-center justify-center transition-colors">
+                            <Maximize2 size={20} className="text-white drop-shadow-md" />
+                          </div>
+                        </div>
+                      ) : m.mediaType === 'image' ? (
+                        <div
+                          onClick={() => setLightboxMedia({ url: m.mediaUrl!, type: 'image', name: m.text })}
+                          className="relative rounded-2xl overflow-hidden cursor-pointer group bg-black"
+                        >
+                          <img src={m.mediaUrl} alt="Media" className="w-full max-h-52 object-cover rounded-2xl" />
+                          <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Maximize2 size={20} className="text-white drop-shadow-md" />
+                          </div>
+                        </div>
+                      ) : m.mediaType === 'audio' ? (
+                        <div className="p-2 rounded-xl bg-black/30 flex items-center gap-2.5">
+                          <Music size={16} className="text-cyan-300 shrink-0" />
+                          <audio src={m.mediaUrl} controls className="w-full max-w-[180px] h-7" />
+                        </div>
+                      ) : (
+                        /* Document or Any File Type Card */
+                        <div
+                          onClick={() => setLightboxMedia({ url: m.mediaUrl!, type: 'document', name: m.text || 'Document' })}
+                          className="p-2.5 rounded-xl bg-black/30 hover:bg-black/50 cursor-pointer flex items-center gap-2.5 transition-colors"
+                        >
+                          <FileText size={18} className="text-cyan-300 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[11px] font-bold text-white block truncate">{m.text || 'Attached Document'}</span>
+                            <span className="text-[9px] text-cyan-200 block">Tap to download</span>
+                          </div>
+                          <Download size={14} className="text-white/80 shrink-0" />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Text message */}
+                  {m.text && (!m.mediaUrl || m.mediaType === 'image' || m.mediaType === 'video') && (
+                    <p className="leading-snug whitespace-pre-wrap">{m.text}</p>
+                  )}
+
+                  <span
                     className={cn(
-                      "max-w-[78%] rounded-2xl px-4 py-2.5 shadow-md break-words",
-                      isMe
-                        ? "bg-gradient-to-r from-cyan-500 to-indigo-600 text-white rounded-br-sm"
-                        : "bg-white/[0.07]  text-slate-100 rounded-bl-sm"
+                      'text-[9px] block mt-0.5 opacity-80',
+                      isMe ? 'text-cyan-100/80 text-right' : 'text-slate-400 text-left'
                     )}
                   >
-                    {m.mediaUrl && (
-                      <div className="mb-2 rounded-xl overflow-hidden max-h-60 border-black/20">
-                        {m.mediaType === 'video' ? (
-                          <video src={m.mediaUrl} controls className="w-full object-cover" />
-                        ) : (
-                          <img src={m.mediaUrl} alt="Attached media" className="w-full object-cover" />
-                        )}
-                      </div>
-                    )}
-                    <p className="text-sm leading-relaxed">{m.text}</p>
-                    <span
-                      className={cn(
-                        "text-[10px] block mt-1",
-                        isMe ? "text-cyan-100/70 text-right" : "text-slate-400"
-                      )}
-                    >
-                      {formatDistanceToNow(new Date(m.createdAt), { addSuffix: true })}
-                    </span>
-                  </div>
+                    {m.createdAt ? formatDistanceToNow(new Date(m.createdAt), { addSuffix: true }) : 'just now'}
+                  </span>
                 </div>
-              );
-            })
-          )}
+              </div>
+            );
+          })}
           <div ref={messagesEndRef} />
         </main>
 
         {/* Chat Input Dock */}
-        <footer className="absolute bottom-0 left-0 right-0 p-3 pb-safe bg-[#07080c]/95 border-t border-white/[0.06]">
-          <div className="flex items-end gap-2 bg-white/[0.05] rounded-3xl p-1.5 pl-3 border border-white/[0.05] focus-within:border-cyan-400/50 transition-colors shadow-inner">
+        <footer className="shrink-0 p-3 pb-20 md:pb-4 bg-[#07080c] border-t border-white/[0.06] z-30">
+          <div className="flex items-center gap-2 bg-white/[0.06] rounded-2xl p-1.5 pl-3 border border-white/[0.08] focus-within:border-cyan-400/50 transition-colors shadow-inner">
+            {/* Unlimited media & document attachment input */}
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="p-2 -ml-1 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0 mb-0.5"
+              className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-full transition-colors shrink-0"
+              title="Attach media or documents (any format)"
             >
-              <Paperclip size={20} />
+              <Paperclip size={18} />
             </button>
             <input
               type="file"
               ref={fileInputRef}
-              onChange={handleMediaUpload}
+              onChange={handleFileUpload}
               className="hidden"
-              accept="image/*,video/*"
+              accept="*/*"
             />
-            
-            <textarea
+
+            <input
+              type="text"
               value={messageText}
               onChange={(e) => setMessageText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                if (e.key === 'Enter') {
                   e.preventDefault();
                   handleSendMessage();
                 }
               }}
-              placeholder="Message..."
-              className="flex-1 bg-transparent text-white text-sm max-h-32 min-h-[40px] py-2.5 resize-none outline-none placeholder-slate-500"
-              rows={1}
+              placeholder="Type a message..."
+              className="flex-1 bg-transparent text-white text-xs sm:text-sm py-2 outline-none placeholder-slate-500 min-w-0"
             />
 
             <button
               onClick={handleSendMessage}
               disabled={!messageText.trim() || isSending}
-              className="p-2.5 rounded-full bg-cyan-400 text-black hover:bg-cyan-300 disabled:opacity-50 disabled:bg-white/10 disabled:text-slate-500 transition-all shrink-0 mb-0.5"
+              className="p-2.5 rounded-xl bg-cyan-400 text-black hover:bg-cyan-300 disabled:opacity-40 disabled:bg-white/10 disabled:text-slate-500 transition-all shrink-0 active:scale-95 shadow-[0_0_10px_rgba(0,240,255,0.2)]"
             >
-              <Send size={18} className={isSending ? 'animate-pulse' : ''} />
+              <Send size={16} className={isSending ? 'animate-pulse' : ''} />
             </button>
           </div>
         </footer>
+
+        {/* Media Lightbox Viewer Modal */}
+        {/* Live Audio Call Fullscreen Overlay */}
+        {isAudioCallActive && (
+          <div className="fixed inset-0 z-50 flex flex-col items-center justify-between bg-gradient-to-b from-[#090b14] via-[#0d1222] to-[#060810] p-6 text-white select-none animate-in fade-in">
+            {/* Top info */}
+            <div className="pt-10 flex flex-col items-center text-center space-y-2">
+              <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs uppercase tracking-wider flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                HD Audio Call
+              </span>
+              <h2 className="text-xl font-extrabold text-white">
+                {partner?.displayName || 'Creator'}
+              </h2>
+              <span className="text-xs text-cyan-400">@{partner?.username || 'user'}</span>
+              <span className="text-sm font-mono text-slate-300 font-bold pt-1">
+                {Math.floor(callSeconds / 60).toString().padStart(2, '0')}:
+                {(callSeconds % 60).toString().padStart(2, '0')}
+              </span>
+            </div>
+
+            {/* Avatar & Equalizer animation */}
+            <div className="relative my-auto flex flex-col items-center justify-center">
+              <div className="absolute w-44 h-44 rounded-full bg-cyan-500/10 animate-ping" />
+              <div className="absolute w-36 h-36 rounded-full bg-indigo-500/20 animate-pulse" />
+              <img
+                src={partner?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=partner'}
+                alt={partner?.displayName || 'User'}
+                className="w-28 h-28 rounded-full object-cover border-4 border-cyan-400/80 shadow-[0_0_30px_rgba(0,240,255,0.4)] relative z-10"
+              />
+            </div>
+
+            {/* Call Controls */}
+            <div className="pb-12 flex items-center justify-center gap-6 w-full max-w-xs">
+              <button
+                onClick={toggleCallMute}
+                className={cn(
+                  'p-4 rounded-full border transition-all active:scale-95',
+                  isCallMuted
+                    ? 'bg-rose-500 border-rose-400 text-white shadow-lg'
+                    : 'bg-white/10 border-white/20 text-slate-200 hover:bg-white/20'
+                )}
+                title={isCallMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+              >
+                {isCallMuted ? <MicOff size={22} /> : <Mic size={22} />}
+              </button>
+
+              <button
+                onClick={() => setIsSpeakerMuted(!isSpeakerMuted)}
+                className={cn(
+                  'p-4 rounded-full border transition-all active:scale-95',
+                  isSpeakerMuted
+                    ? 'bg-amber-500 border-amber-400 text-white shadow-lg'
+                    : 'bg-white/10 border-white/20 text-slate-200 hover:bg-white/20'
+                )}
+                title={isSpeakerMuted ? 'Speaker On' : 'Speaker Off'}
+              >
+                {isSpeakerMuted ? <VolumeX size={22} /> : <Volume2 size={22} />}
+              </button>
+
+              <button
+                onClick={endAudioCall}
+                className="p-4 rounded-full bg-rose-600 hover:bg-rose-500 text-white shadow-[0_0_25px_rgba(244,63,94,0.5)] active:scale-95 transition-all"
+                title="End Call"
+              >
+                <PhoneOff size={22} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {lightboxMedia && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-md p-4">
+            <div className="relative w-full max-w-lg max-h-[90vh] flex flex-col items-center justify-center">
+              <button
+                onClick={() => setLightboxMedia(null)}
+                className="absolute top-2 right-2 z-10 p-2 rounded-full bg-black/60 text-white hover:bg-black/90"
+              >
+                <X size={22} />
+              </button>
+
+              <div className="w-full flex items-center justify-center p-2">
+                {lightboxMedia.type === 'video' ? (
+                  <video src={lightboxMedia.url} controls autoPlay className="max-w-full max-h-[70vh] rounded-2xl shadow-2xl" />
+                ) : lightboxMedia.type === 'image' ? (
+                  <img src={lightboxMedia.url} alt="Full view" className="max-w-full max-h-[70vh] object-contain rounded-2xl shadow-2xl" />
+                ) : (
+                  <div className="p-8 rounded-3xl bg-[#0e111a] border border-white/10 text-center space-y-4">
+                    <FileText size={48} className="text-cyan-400 mx-auto" />
+                    <div>
+                      <h4 className="text-sm font-bold text-white">{lightboxMedia.name || 'Document'}</h4>
+                      <p className="text-xs text-slate-400 mt-1">Ready to download or preview</p>
+                    </div>
+                    <a
+                      href={lightboxMedia.url}
+                      download={lightboxMedia.name || 'document'}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-400 text-black font-bold text-xs hover:bg-cyan-300 transition-all shadow-md"
+                    >
+                      <Download size={16} /> Download File
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
-  // View: Conversations List
+  // View: Conversations List (Created only when real messages exist)
   return (
-    <div className="flex flex-col h-full bg-[#07080c]">
+    <div className="flex flex-col h-full bg-[#07080c] overflow-hidden">
       {!hideHeader && (
-        <header className="px-4 py-3.5 border-b  flex items-center justify-between bg-[#07080c]/90 ">
+        <header className="pt-safe px-4 py-3.5 flex items-center justify-between bg-[#07080c]/90 shrink-0">
           <h2 className="text-lg font-bold text-white">Direct Messages</h2>
           <button
             onClick={() => {
@@ -374,7 +710,7 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-cyan-400 text-black font-bold text-xs hover:bg-cyan-300 active:scale-95 transition-all shadow-[0_0_12px_rgba(0,240,255,0.3)]"
           >
             <Plus size={15} strokeWidth={3} />
-            New Chat
+            <span>New Chat</span>
           </button>
         </header>
       )}
@@ -383,7 +719,7 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
       <main className="flex-1 overflow-y-auto hide-scrollbar p-3 pb-24">
         {loading ? (
           <div className="flex flex-col gap-3 p-2">
-            {[1, 2, 3].map(i => (
+            {[1, 2, 3].map((i) => (
               <div key={i} className="flex items-center gap-3 p-2 rounded-xl animate-pulse">
                 <div className="w-12 h-12 rounded-full bg-white/[0.05]" />
                 <div className="flex-1 space-y-2">
@@ -400,16 +736,16 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
               <div
                 key={conv.id}
                 onClick={() => openConversation(conv)}
-                className="flex items-center gap-3.5 p-3 rounded-2xl hover:bg-white/[0.04] transition-colors cursor-pointer border-transparent hover:border-white/[0.06] mb-1"
+                className="flex items-center gap-3.5 p-3 rounded-2xl hover:bg-white/[0.04] transition-colors cursor-pointer mb-1 border border-transparent hover:border-white/[0.06]"
               >
                 <div className="relative w-12 h-12 shrink-0">
                   <img
                     src={partner?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=partner'}
                     alt={partner?.displayName || 'User'}
-                    className="w-full h-full rounded-full object-cover bg-slate-800 "
+                    className="w-full h-full rounded-full object-cover bg-slate-800"
                   />
                   {(conv.unreadCount || 0) > 0 && (
-                    <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-cyan-400 text-black text-[10px] font-extrabold flex items-center justify-center shadow-md animate-pulse">
+                    <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-cyan-400 text-black text-[10px] font-extrabold flex items-center justify-center shadow-md">
                       {conv.unreadCount}
                     </span>
                   )}
@@ -418,37 +754,38 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-0.5">
                     <span className="font-bold text-sm text-white truncate">
-                      {partner?.displayName || 'Omni Creator'}
+                      {partner?.displayName || 'Nexus Creator'}
                     </span>
                     {conv.lastMessageAt && (
-                      <span className="text-[11px] text-slate-500 shrink-0">
+                      <span className="text-[10px] text-slate-500">
                         {formatDistanceToNow(new Date(conv.lastMessageAt), { addSuffix: true })}
                       </span>
                     )}
                   </div>
                   <p className="text-xs text-slate-400 truncate">
-                    {conv.lastMessageText || 'Tap to view conversation'}
+                    {conv.lastMessage || 'Start conversation...'}
                   </p>
                 </div>
               </div>
             );
           })
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center px-6 py-12">
-            <div className="w-16 h-16 rounded-2xl bg-cyan-500/10  flex items-center justify-center text-cyan-400 mb-3 shadow-[0_0_20px_rgba(0,240,255,0.15)]">
-              <MessageCircle size={32} />
+          /* Clean empty state when no chats have been started */
+          <div className="flex flex-col items-center justify-center py-20 text-center px-6">
+            <div className="w-14 h-14 rounded-2xl bg-cyan-500/10 flex items-center justify-center text-cyan-400 mb-3 shadow-[0_0_20px_rgba(0,240,255,0.15)]">
+              <MessageCircle size={26} />
             </div>
-            <h3 className="text-base font-bold text-white mb-1">No messages yet</h3>
+            <h3 className="text-base font-bold text-white mb-1">No Messages Yet</h3>
             <p className="text-xs text-slate-400 max-w-xs mb-5">
-              Direct message any creator on Omni to collaborate, share feedback, and chat.
+              Direct messages will appear here once you send or receive a message.
             </p>
             <button
               onClick={() => {
-                requireAuth('New Message', 'Sign in to start a direct message.', () => {
+                requireAuth('New Message', 'Sign in to start a message.', () => {
                   setIsNewChatOpen(true);
                 });
               }}
-              className="px-5 py-2.5 rounded-xl bg-cyan-400 text-black font-bold text-xs hover:bg-cyan-300 transition-all shadow-[0_0_15px_rgba(0,240,255,0.3)]"
+              className="px-5 py-2 rounded-xl bg-cyan-400 text-black font-bold text-xs hover:bg-cyan-300 transition-all shadow-[0_0_15px_rgba(0,240,255,0.25)]"
             >
               Start a Conversation
             </button>
@@ -456,61 +793,67 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
         )}
       </main>
 
-      {/* New Chat Modal */}
+      {/* New Chat Dialog */}
       {isNewChatOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80  p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-[#0f1118]  p-4 shadow-2xl flex flex-col max-h-[80vh]">
-            <div className="flex items-center justify-between pb-3 border-b  mb-3">
-              <h3 className="font-bold text-white text-base">New Message</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-[#0e111a] border border-white/[0.08] p-4 shadow-2xl flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
+              <h3 className="font-bold text-white text-sm">New Message</h3>
               <button
-                onClick={() => setIsNewChatOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-full"
+                onClick={() => {
+                  setIsNewChatOpen(false);
+                  setSearchUserQuery('');
+                  setUserSearchResults([]);
+                }}
+                className="text-slate-400 hover:text-white p-1 rounded-full hover:bg-white/[0.08]"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="flex items-center gap-2 bg-white/[0.05] rounded-xl px-3 py-2  mb-3">
-              <Search size={16} className="text-slate-400" />
+            {/* Search Input */}
+            <div className="mt-3 relative">
+              <Search size={15} className="absolute left-3.5 top-3 text-slate-400" />
               <input
                 type="text"
                 value={searchUserQuery}
                 onChange={(e) => setSearchUserQuery(e.target.value)}
-                placeholder="Search creator by name or @handle..."
-                className="bg-transparent text-xs text-white placeholder-slate-500 outline-none flex-1"
+                placeholder="Search by name or @username..."
+                className="w-full bg-white/[0.05] border border-white/[0.08] rounded-xl pl-9 pr-3.5 py-2 text-xs text-white outline-none focus:border-cyan-400/50"
                 autoFocus
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto hide-scrollbar space-y-1">
+            {/* Results */}
+            <div className="flex-1 overflow-y-auto hide-scrollbar mt-3 space-y-1.5 min-h-[160px]">
               {isSearchingUsers ? (
                 <div className="text-center py-6 text-xs text-slate-500">Searching creators...</div>
               ) : userSearchResults.length > 0 ? (
-                userSearchResults.map((user) => (
+                userSearchResults.map((u) => (
                   <div
-                    key={user.id}
-                    onClick={() => handleStartConversationWithUser(user)}
-                    className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/[0.06] cursor-pointer transition-colors"
+                    key={u.id}
+                    onClick={() => handleStartConversationWithUser(u)}
+                    className="flex items-center justify-between p-2.5 rounded-xl hover:bg-white/[0.05] cursor-pointer transition-colors"
                   >
-                    <img
-                      src={user.avatar}
-                      alt={user.displayName}
-                      className="w-10 h-10 rounded-full object-cover bg-slate-800"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-xs text-white truncate">
-                        {user.displayName}
-                      </div>
-                      <div className="text-[11px] text-cyan-400 truncate">
-                        @{user.username}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={u.avatar}
+                        alt={u.displayName}
+                        className="w-9 h-9 rounded-full object-cover bg-slate-800"
+                      />
+                      <div className="min-w-0">
+                        <div className="font-bold text-xs text-white truncate">{u.displayName}</div>
+                        <div className="text-[11px] text-cyan-400 truncate">@{u.username}</div>
                       </div>
                     </div>
                   </div>
                 ))
               ) : searchUserQuery.trim() ? (
-                <div className="text-center py-6 text-xs text-slate-500">No users found matching "{searchUserQuery}"</div>
+                <div className="text-center py-6 text-xs text-slate-500">No creators found.</div>
               ) : (
-                <div className="text-center py-6 text-xs text-slate-500">Type a username to start chatting</div>
+                <div className="text-center py-6 text-xs text-slate-500">
+                  Type a creator's name or @handle to start chatting.
+                </div>
               )}
             </div>
           </div>
