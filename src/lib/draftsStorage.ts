@@ -58,7 +58,9 @@ export async function saveDraft(draft: CreatorDraft): Promise<void> {
         allowComments: draft.allowComments,
         updatedAt: draft.updatedAt
       }));
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Failed to save draft metadata to localStorage fallback:', e);
+    }
   }
 }
 
@@ -87,7 +89,9 @@ export async function getLatestDraft(): Promise<CreatorDraft | null> {
       if (saved) {
         return JSON.parse(saved);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Failed to parse draft metadata from localStorage fallback:', e);
+    }
     return null;
   }
 }
@@ -102,6 +106,8 @@ export async function clearDraft(id?: string): Promise<void> {
     } else {
       store.clear();
     }
-  } catch (err) {}
+  } catch (err) {
+    console.warn('Failed to clear draft from IndexedDB:', err);
+  }
   localStorage.removeItem('omni_creator_draft_meta');
 }

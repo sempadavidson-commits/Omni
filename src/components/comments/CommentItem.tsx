@@ -5,6 +5,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { cn } from '../../lib/utils';
 import { useAppContext } from '../../context/AppContext';
 import { useNavigate } from 'react-router-dom';
+import { telemetry } from '../../lib/telemetry';
 
 interface CommentItemProps {
   comment: Comment;
@@ -41,7 +42,13 @@ export function CommentItem({ comment, onReply, onDelete }: CommentItemProps) {
 
   const handleReport = () => {
     setReported(true);
-    setTimeout(() => setReported(false), 2000);
+    // Track report action in telemetry
+    try {
+      telemetry.track({ type: 'skip', postId: comment.postId, creatorId: author.id });
+    } catch (e) {
+      console.warn('Failed to track comment report event:', e);
+    }
+    setTimeout(() => setReported(false), 2500);
   };
 
   return (
@@ -70,8 +77,18 @@ export function CommentItem({ comment, onReply, onDelete }: CommentItemProps) {
         <p className="text-xs text-slate-200 leading-relaxed break-words">
           {comment.text.split(' ').map((word, i) => {
             if (word.startsWith('@')) {
+              const cleanedUsername = word.replace(/^@|[.,!?]/g, '');
               return (
-                <span key={i} className="text-cyan-400 font-semibold cursor-pointer hover:underline mr-1">
+                <span
+                  key={i}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (cleanedUsername) {
+                      navigate(`/profile/${cleanedUsername}`);
+                    }
+                  }}
+                  className="text-cyan-400 font-semibold cursor-pointer hover:underline mr-1"
+                >
                   {word}{' '}
                 </span>
               );

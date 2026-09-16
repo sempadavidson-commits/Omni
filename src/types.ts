@@ -27,6 +27,10 @@ export interface Post {
   repostedBy?: User; // if shown as repost in feed
   type: 'text' | 'image' | 'video';
   content: string; // text or url
+  mediaUrl?: string;
+  storageKey?: string;
+  mimeType?: string;
+  mediaSize?: number;
   caption?: string;
   tags?: string;
   visibility?: 'public' | 'followers' | 'private';
@@ -67,7 +71,7 @@ export interface BackgroundUploadTask {
   visibility?: string;
   allowComments?: boolean;
   progress: number;
-  status: 'uploading' | 'processing' | 'completed' | 'error';
+  status: 'uploading' | 'processing' | 'completed' | 'error' | 'failed';
   error?: string;
   createdAt: string;
   resultPostId?: string;

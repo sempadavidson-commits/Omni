@@ -19,8 +19,6 @@ import { cn } from '../lib/utils';
 import { auth } from '../lib/firebase';
 import { User as UserType, Post } from '../types';
 
-const TRENDING_TAGS = ['#omni', '#creative', '#motion', '#cinematic', '#pulse', '#tech', '#lifestyle'];
-
 export function Search() {
   const [searchParams] = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
@@ -53,20 +51,52 @@ export function Search() {
     setRecentSearches(updated);
     try {
       localStorage.setItem('omni_recent_searches', JSON.stringify(updated));
-    } catch {}
+    } catch (e) {
+      console.warn('Failed to save recent search to storage:', e);
+    }
   };
 
   const clearRecentSearches = () => {
     setRecentSearches([]);
     try {
       localStorage.removeItem('omni_recent_searches');
-    } catch {}
+    } catch (e) {
+      console.warn('Failed to clear recent searches from storage:', e);
+    }
   };
 
-  // Perform search with debounce
+  // Perform search with debounce, or fetch trending topics when empty
   useEffect(() => {
     if (!query.trim()) {
-      setResults({ users: [], posts: [], tags: [] });
+      const fetchTrending = async () => {
+        try {
+          const res = await fetch('/api/search?q=&filter=all');
+          if (res.ok) {
+            const data = await res.json();
+            setResults({
+              users: data.users || [],
+              posts: data.posts || [],
+              tags: (data.tags && data.tags.length > 0)
+                ? data.tags
+                : ['creative', 'viral', 'fyp', 'dance', 'comedy', 'creators', 'music', 'lifestyle']
+            });
+          } else {
+            setResults({
+              users: [],
+              posts: [],
+              tags: ['creative', 'viral', 'fyp', 'dance', 'comedy', 'creators', 'music', 'lifestyle']
+            });
+          }
+        } catch (e) {
+          console.warn('Could not load trending suggestions:', e);
+          setResults({
+            users: [],
+            posts: [],
+            tags: ['creative', 'viral', 'fyp', 'dance', 'comedy', 'creators', 'music', 'lifestyle']
+          });
+        }
+      };
+      fetchTrending();
       setLoading(false);
       return;
     }
@@ -107,11 +137,15 @@ export function Search() {
 
       try {
         const token = await auth.currentUser?.getIdToken();
-        await fetch(`/api/follow/${targetUserId}`, {
+        const res = await fetch(`/api/follow/${targetUserId}`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` }
         });
+        if (!res.ok) {
+          throw new Error('Follow request failed');
+        }
       } catch (e) {
+        console.error('Follow error in search:', e);
         // revert on error
         setFollowedUserIds(prev => {
           const next = new Set(prev);
@@ -139,7 +173,7 @@ export function Search() {
         </button>
 
         {/* Input Pill */}
-        <div className="flex-1 bg-white/[0.06] rounded-full flex items-center px-3.5 h-10  focus-within:border-cyan-400/50 transition-colors">
+        <div className="flex-1 bg-white/[0.06] rounded-full flex items-center px-3.5 h-10 transition-colors">
           <SearchIcon size={16} className="text-slate-400 mr-2 shrink-0" />
           <input
             type="text"
@@ -284,26 +318,33 @@ export function Search() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Videos & Posts</h3>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                    {results.posts.map((post) => (
-                      <div
-                        key={post.id}
-                        onClick={() => navigate(`/post/${post.id}`)}
-                        className="aspect-[9/14] rounded-xl overflow-hidden bg-white/[0.03]  relative group cursor-pointer"
-                      >
-                        {post.type === 'video' ? (
-                          <video
-                            src={post.content}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                            muted
-                            playsInline
-                          />
-                        ) : (
-                          <img
-                            src={post.content}
-                            alt={post.caption || 'Post media'}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          />
-                        )}
+                    {results.posts.map((post, idx) => {
+                      const rawMedia = post.mediaUrl || post.content;
+                      const mediaSource = (rawMedia && (rawMedia.startsWith('http') || rawMedia.startsWith('/') || rawMedia.startsWith('blob:') || rawMedia.startsWith('data:')))
+                        ? rawMedia
+                        : `/api/posts/${post.id}/media`;
+
+                      return (
+                        <div
+                          key={`${post.id}-${idx}`}
+                          onClick={() => navigate(`/post/${post.id}`)}
+                          className="aspect-[9/14] rounded-xl overflow-hidden bg-white/[0.03]  relative group cursor-pointer"
+                        >
+                          {post.type === 'video' ? (
+                            <video
+                              src={mediaSource}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              muted
+                              playsInline
+                              preload="metadata"
+                            />
+                          ) : (
+                            <img
+                              src={mediaSource}
+                              alt={post.caption || 'Post media'}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            />
+                          )}
 
                         {/* Bottom Overlay Info */}
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-2.5">
@@ -319,7 +360,8 @@ export function Search() {
                           </div>
                         </div>
                       </div>
-                    ))}
+                    );
+                  })}
                   </div>
                 </div>
               )}
@@ -364,23 +406,29 @@ export function Search() {
                 <TrendingUp size={14} className="text-cyan-400" />
                 <span>Trending on Omni</span>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                {TRENDING_TAGS.map((tag, idx) => (
-                  <div
-                    key={tag}
-                    onClick={() => setQuery(tag)}
-                    className="p-3 rounded-xl bg-white/[0.03] hover:bg-cyan-500/[0.08] border-white/[0.06] hover: cursor-pointer transition-all flex items-center justify-between group"
-                  >
-                    <div>
-                      <span className="text-xs font-bold text-slate-200 group-hover:text-cyan-300 block">
-                        {tag}
-                      </span>
-                      <span className="text-[10px] text-slate-500">Trending #{idx + 1}</span>
+              {results.tags.length > 0 ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {results.tags.map((tag, idx) => (
+                    <div
+                      key={tag}
+                      onClick={() => setQuery(tag)}
+                      className="p-3 rounded-xl bg-white/[0.03] hover:bg-cyan-500/[0.08] border-white/[0.06] hover: cursor-pointer transition-all flex items-center justify-between group"
+                    >
+                      <div>
+                        <span className="text-xs font-bold text-slate-200 group-hover:text-cyan-300 block">
+                          #{tag.replace(/^#/, '')}
+                        </span>
+                        <span className="text-[10px] text-slate-500">Trending #{idx + 1}</span>
+                      </div>
+                      <Hash size={14} className="text-slate-500 group-hover:text-cyan-400" />
                     </div>
-                    <Hash size={14} className="text-slate-500 group-hover:text-cyan-400" />
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/[0.04] text-center">
+                  <p className="text-xs text-slate-500">No trending topics right now. Search for creators or keywords above!</p>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -101,7 +101,7 @@ export function PostDetail() {
           className="flex-1 h-full w-full overflow-y-scroll snap-y snap-mandatory scrollbar-none"
         >
           {posts.map((p, idx) => (
-            <div key={p.id} className="h-full w-full snap-start">
+            <div key={`${p.id}-${idx}`} className="h-full w-full snap-start">
               <PostCard 
                 post={p} 
                 isActive={idx === activeIndex}

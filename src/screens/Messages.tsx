@@ -21,7 +21,11 @@ import {
   Mic,
   MicOff,
   Volume2,
-  VolumeX
+  VolumeX,
+  Trash2,
+  Play,
+  Pause,
+  Square
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -29,6 +33,7 @@ import { useAppContext } from '../context/AppContext';
 import { cn } from '../lib/utils';
 import { auth } from '../lib/firebase';
 import { Conversation, Message, User } from '../types';
+import { AudioMessagePlayer } from '../components/AudioMessagePlayer';
 
 export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -46,6 +51,20 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
   const [messageText, setMessageText] = useState('');
   const [isSending, setIsSending] = useState(false);
 
+  // Voice Note Recording State (Max 1hr = 3600s)
+  const [isRecording, setIsRecording] = useState(false);
+  const [isRecordingPaused, setIsRecordingPaused] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<any>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
   // Audio Call & Bubble Zoom State
   const [isAudioCallActive, setIsAudioCallActive] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
@@ -54,6 +73,200 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
   const [isEnlargedBubble, setIsEnlargedBubble] = useState(false);
   const callTimerRef = useRef<any>(null);
   const localAudioStreamRef = useRef<MediaStream | null>(null);
+
+  const formatRecordTime = (secs: number) => {
+    const hours = Math.floor(secs / 3600);
+    const mins = Math.floor((secs % 3600) / 60);
+    const remainingSecs = secs % 60;
+    if (hours > 0) {
+      return `${hours}:${mins.toString().padStart(2, '0')}:${remainingSecs.toString().padStart(2, '0')}`;
+    }
+    return `${mins.toString().padStart(2, '0')}:${remainingSecs.toString().padStart(2, '0')}`;
+  };
+
+  const startVoiceRecording = async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Microphone recording is not supported on this browser/device.');
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordingStreamRef.current = stream;
+
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setRecordedBlob(audioBlob);
+        const url = URL.createObjectURL(audioBlob);
+        setRecordedAudioUrl(url);
+      };
+
+      mediaRecorder.start(200);
+      setIsRecording(true);
+      setIsRecordingPaused(false);
+      setRecordSeconds(0);
+      setRecordedAudioUrl(null);
+      setRecordedBlob(null);
+
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordSeconds((prev) => {
+          if (prev >= 3600) { // Max 1 hour auto-stop
+            stopVoiceRecording();
+            return 3600;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err) {
+      console.error('Microphone access error:', err);
+      alert('Failed to access microphone. Please allow microphone permissions.');
+    }
+  };
+
+  const togglePauseResumeRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) return;
+
+    if (isRecordingPaused) {
+      if (recorder.state === 'paused') {
+        recorder.resume();
+      }
+      setIsRecordingPaused(false);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordSeconds((prev) => {
+          if (prev >= 3600) {
+            stopVoiceRecording();
+            return 3600;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } else {
+      if (recorder.state === 'recording') {
+        recorder.pause();
+      }
+      setIsRecordingPaused(true);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  };
+
+  const stopVoiceRecording = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (recordingStreamRef.current) {
+      recordingStreamRef.current.getTracks().forEach((track) => track.stop());
+      recordingStreamRef.current = null;
+    }
+    setIsRecordingPaused(true);
+  };
+
+  const togglePreviewPlayPause = () => {
+    const audio = previewAudioRef.current;
+    if (!audio) return;
+    if (isPreviewPlaying) {
+      audio.pause();
+      setIsPreviewPlaying(false);
+    } else {
+      audio.play().then(() => setIsPreviewPlaying(true)).catch(console.warn);
+    }
+  };
+
+  const cancelVoiceRecording = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (recordingStreamRef.current) {
+      recordingStreamRef.current.getTracks().forEach((track) => track.stop());
+      recordingStreamRef.current = null;
+    }
+    if (recordedAudioUrl) {
+      URL.revokeObjectURL(recordedAudioUrl);
+    }
+    setIsRecording(false);
+    setIsRecordingPaused(false);
+    setRecordSeconds(0);
+    setRecordedAudioUrl(null);
+    setRecordedBlob(null);
+    setIsPreviewPlaying(false);
+  };
+
+  const sendVoiceRecordingMessage = async () => {
+    if (!activeConversation) return;
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      stopVoiceRecording();
+    }
+
+    let blobToSend = recordedBlob;
+    if (!blobToSend && audioChunksRef.current.length > 0) {
+      blobToSend = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+    }
+
+    if (!blobToSend) {
+      cancelVoiceRecording();
+      return;
+    }
+
+    setIsSending(true);
+
+    const reader = new FileReader();
+    reader.readAsDataURL(blobToSend);
+    reader.onloadend = async () => {
+      const base64Audio = reader.result as string;
+      const durationText = formatRecordTime(recordSeconds);
+
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        const res = await fetch(`/api/conversations/${activeConversation.id}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            text: `🎙️ Voice Note (${durationText})`,
+            mediaUrl: base64Audio,
+            mediaType: 'audio'
+          })
+        });
+
+        if (res.ok) {
+          const newMsg = await res.json();
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
+        }
+      } catch (err) {
+        console.error('Error sending audio message:', err);
+      } finally {
+        setIsSending(false);
+        cancelVoiceRecording();
+      }
+    };
+  };
 
   const startAudioCall = async () => {
     setIsAudioCallActive(true);
@@ -217,7 +430,9 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
           fetchConversations();
           refreshUnreadCount();
         }
-      } catch (err) {}
+      } catch (err) {
+        console.warn('Could not parse SSE message in Messages:', err);
+      }
     };
     return () => {
       eventSource.close();
@@ -266,7 +481,9 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
           const filtered = (data.users || []).filter((u: User) => u.id !== currentUser?.id);
           setUserSearchResults(filtered);
         }
-      } catch (e) {} finally {
+      } catch (e) {
+        console.error('Error searching users for message conversation:', e);
+      } finally {
         setIsSearchingUsers(false);
       }
     }, 250);
@@ -501,11 +718,8 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
                             <Maximize2 size={20} className="text-white drop-shadow-md" />
                           </div>
                         </div>
-                      ) : m.mediaType === 'audio' ? (
-                        <div className="p-2 rounded-xl bg-black/30 flex items-center gap-2.5">
-                          <Music size={16} className="text-cyan-300 shrink-0" />
-                          <audio src={m.mediaUrl} controls className="w-full max-w-[180px] h-7" />
-                        </div>
+                      ) : m.mediaType === 'audio' || (m.mediaUrl && (m.mediaUrl.startsWith('data:audio/') || m.mediaUrl.endsWith('.mp3') || m.mediaUrl.endsWith('.webm') || m.mediaUrl.endsWith('.ogg') || m.mediaUrl.endsWith('.wav'))) ? (
+                        <AudioMessagePlayer src={m.mediaUrl} isMe={isMe} />
                       ) : (
                         /* Document or Any File Type Card */
                         <div
@@ -543,47 +757,143 @@ export function Messages({ hideHeader }: { hideHeader?: boolean } = {}) {
           <div ref={messagesEndRef} />
         </main>
 
-        {/* Chat Input Dock */}
+        {/* Chat Input Dock with Voice Recorder */}
         <footer className="shrink-0 p-3 pb-20 md:pb-4 bg-[#07080c] border-t border-white/[0.06] z-30">
-          <div className="flex items-center gap-2 bg-white/[0.06] rounded-2xl p-1.5 pl-3 border border-white/[0.08] focus-within:border-cyan-400/50 transition-colors shadow-inner">
-            {/* Unlimited media & document attachment input */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-full transition-colors shrink-0"
-              title="Attach media or documents (any format)"
-            >
-              <Paperclip size={18} />
-            </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              className="hidden"
-              accept="*/*"
-            />
+          {isRecording ? (
+            <div className="flex items-center justify-between gap-3 bg-[#11131f] rounded-2xl p-2 px-3.5 border border-rose-500/30 shadow-xl">
+              {recordedAudioUrl && (
+                <audio
+                  ref={previewAudioRef}
+                  src={recordedAudioUrl}
+                  onEnded={() => setIsPreviewPlaying(false)}
+                  className="hidden"
+                />
+              )}
 
-            <input
-              type="text"
-              value={messageText}
-              onChange={(e) => setMessageText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleSendMessage();
+              {/* Cancel / Discard */}
+              <button
+                onClick={cancelVoiceRecording}
+                type="button"
+                className="p-2 rounded-full bg-white/10 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors shrink-0"
+                title="Discard recording"
+              >
+                <Trash2 size={18} />
+              </button>
+
+              {/* Recording Status & Waveform */}
+              <div className="flex items-center gap-2 flex-1 justify-center min-w-0">
+                <div className={cn(
+                  "w-2.5 h-2.5 rounded-full shrink-0 transition-all",
+                  !isRecordingPaused ? "bg-rose-500 animate-ping" : "bg-amber-400"
+                )} />
+                <span className="font-mono text-xs sm:text-sm font-bold text-white tracking-wider shrink-0">
+                  {formatRecordTime(recordSeconds)}
+                </span>
+                <span className="text-[10px] text-slate-400 font-medium hidden sm:inline shrink-0">
+                  (Max 1hr)
+                </span>
+
+                {/* Animated visualizer bars */}
+                <div className="flex items-center gap-[2px] h-4 shrink-0">
+                  {[40, 75, 100, 60, 90, 45, 80].map((h, i) => (
+                    <div
+                      key={i}
+                      style={{ height: !isRecordingPaused ? `${h}%` : '20%' }}
+                      className={cn(
+                        "w-1 rounded-full transition-all duration-200",
+                        !isRecordingPaused ? "bg-rose-500" : "bg-slate-600"
+                      )}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Toggle Pause / Resume or Preview Play / Pause */}
+              <button
+                onClick={() => {
+                  if (recordedAudioUrl) {
+                    togglePreviewPlayPause();
+                  } else {
+                    togglePauseResumeRecording();
+                  }
+                }}
+                type="button"
+                className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-all active:scale-95 shrink-0"
+                title={
+                  recordedAudioUrl
+                    ? (isPreviewPlaying ? "Pause preview" : "Play preview")
+                    : (isRecordingPaused ? "Resume recording" : "Pause recording")
                 }
-              }}
-              placeholder="Type a message..."
-              className="flex-1 bg-transparent text-white text-xs sm:text-sm py-2 outline-none placeholder-slate-500 min-w-0"
-            />
+              >
+                {recordedAudioUrl ? (
+                  isPreviewPlaying ? <Pause size={18} className="fill-current text-cyan-400" /> : <Play size={18} className="fill-current text-cyan-400 ml-0.5" />
+                ) : (
+                  isRecordingPaused ? <Play size={18} className="fill-current text-amber-400 ml-0.5" /> : <Pause size={18} className="fill-current text-rose-400" />
+                )}
+              </button>
 
-            <button
-              onClick={handleSendMessage}
-              disabled={!messageText.trim() || isSending}
-              className="p-2.5 rounded-xl bg-cyan-400 text-black hover:bg-cyan-300 disabled:opacity-40 disabled:bg-white/10 disabled:text-slate-500 transition-all shrink-0 active:scale-95 shadow-[0_0_10px_rgba(0,240,255,0.2)]"
-            >
-              <Send size={16} className={isSending ? 'animate-pulse' : ''} />
-            </button>
-          </div>
+              {/* Send Recorded Voice Note */}
+              <button
+                onClick={sendVoiceRecordingMessage}
+                type="button"
+                disabled={isSending || (recordSeconds === 0 && !recordedBlob)}
+                className="p-2.5 rounded-xl bg-cyan-400 text-black hover:bg-cyan-300 disabled:opacity-40 transition-all font-bold flex items-center shrink-0 active:scale-95 shadow-[0_0_10px_rgba(0,240,255,0.2)]"
+                title="Send voice note"
+              >
+                <Send size={16} className={isSending ? 'animate-pulse' : ''} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 bg-white/[0.06] rounded-2xl p-1.5 pl-3 border border-white/[0.08] focus-within:border-cyan-400/50 transition-colors shadow-inner">
+              {/* Unlimited media & document attachment input */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-full transition-colors shrink-0"
+                title="Attach media or documents (any format)"
+              >
+                <Paperclip size={18} />
+              </button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                className="hidden"
+                accept="*/*"
+              />
+
+              <input
+                type="text"
+                value={messageText}
+                onChange={(e) => setMessageText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+                placeholder="Type a message..."
+                className="flex-1 bg-transparent text-white text-xs sm:text-sm py-2 outline-none placeholder-slate-500 min-w-0"
+              />
+
+              {/* Microphone Button to record voice messages */}
+              <button
+                onClick={startVoiceRecording}
+                type="button"
+                className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-white/10 rounded-full transition-colors shrink-0"
+                title="Record voice message (Max 1hr)"
+              >
+                <Mic size={18} />
+              </button>
+
+              <button
+                onClick={handleSendMessage}
+                disabled={!messageText.trim() || isSending}
+                className="p-2.5 rounded-xl bg-cyan-400 text-black hover:bg-cyan-300 disabled:opacity-40 disabled:bg-white/10 disabled:text-slate-500 transition-all shrink-0 active:scale-95 shadow-[0_0_10px_rgba(0,240,255,0.2)]"
+              >
+                <Send size={16} className={isSending ? 'animate-pulse' : ''} />
+              </button>
+            </div>
+          )}
         </footer>
 
         {/* Media Lightbox Viewer Modal */}

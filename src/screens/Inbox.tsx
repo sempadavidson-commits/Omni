@@ -32,7 +32,9 @@ export function Inbox() {
           Access your direct messages, comments, likes, and creator activity on Omni.
         </p>
         <button
-          onClick={() => requireAuth('Inbox', 'Sign in to access your activity and messages.', () => {})}
+          onClick={() => requireAuth('Inbox', 'Sign in to access your activity and messages.', () => {
+            setTab('notifications');
+          })}
           className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-indigo-500 text-black font-bold text-xs hover:brightness-110 active:scale-95 transition-all shadow-[0_0_20px_rgba(0,240,255,0.3)]"
         >
           Sign In / Create Account

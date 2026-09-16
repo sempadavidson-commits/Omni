@@ -154,6 +154,7 @@ export function Create() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const activeXhrRef = useRef<XMLHttpRequest | null>(null);
 
   // Video preview player & audio control
@@ -161,6 +162,41 @@ export function Create() {
   const [isPlayingPreview, setIsPlayingPreview] = useState(true);
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Automatically capture video thumbnail frame
+  const extractThumbnailFromUrl = (url: string) => {
+    try {
+      const vid = document.createElement('video');
+      vid.crossOrigin = 'anonymous';
+      vid.muted = true;
+      vid.playsInline = true;
+      vid.src = url;
+
+      vid.onloadedmetadata = () => {
+        vid.currentTime = Math.min(0.5, (vid.duration || 1) / 2);
+      };
+
+      vid.onseeked = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 360;
+          canvas.height = 640;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+            const data = canvas.toDataURL('image/jpeg', 0.85);
+            setThumbnailUrl(data);
+          }
+        } catch (e) {
+          console.warn('Could not extract thumbnail canvas:', e);
+        }
+      };
+
+      vid.load();
+    } catch (err) {
+      console.warn('Thumbnail extraction error:', err);
+    }
+  };
 
   // Live video trimming loop control
   useEffect(() => {
@@ -331,6 +367,7 @@ export function Create() {
         setMediaUrl(objectUrl);
         setMediaType('video');
         setMediaFileName(file.name);
+        extractThumbnailFromUrl(objectUrl);
         stopCameraStream();
         setStep('edit');
       };
@@ -385,6 +422,11 @@ export function Create() {
     }
     const objectUrl = URL.createObjectURL(file);
     setMediaUrl(objectUrl);
+    if (isVideo) {
+      extractThumbnailFromUrl(objectUrl);
+    } else {
+      setThumbnailUrl(objectUrl);
+    }
     stopCameraStream();
     setStep('edit');
   };
@@ -408,7 +450,7 @@ export function Create() {
   };
 
   const handlePublish = async () => {
-    requireAuth('Publish Post', 'Sign in to share your post on Nexus.', async () => {
+    requireAuth('Post Video', 'Sign in to share your post on Omni.', async () => {
       if (!mediaUrl && !caption.trim()) {
         setPublishError('Post must have media or a caption.');
         return;
@@ -421,6 +463,7 @@ export function Create() {
         await startBackgroundUpload({
           file: mediaFile,
           mediaUrl: mediaUrl || undefined,
+          thumbnailUrl: thumbnailUrl || undefined,
           mediaType,
           caption: caption.trim(),
           tags: selectedTags,
@@ -433,7 +476,7 @@ export function Create() {
           localStorage.removeItem(DRAFT_STORAGE_KEY);
         } catch {}
       } catch (err: any) {
-        setPublishError(err.message || 'An unexpected error occurred during publish.');
+        setPublishError(err.message || 'An unexpected error occurred while posting.');
         setIsPublishing(false);
       }
     });

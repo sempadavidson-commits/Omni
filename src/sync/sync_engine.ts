@@ -35,7 +35,9 @@ export class SyncEngine {
     try {
       localStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(this.outbox));
       localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(Array.from(this.eventLog).slice(-200)));
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[SyncEngine] Could not persist outbox to localStorage:', e);
+    }
   }
 
   registerTransport(transport: Transport) {
@@ -49,6 +51,9 @@ export class SyncEngine {
   
   onEvent(callback: (event: SocialEvent) => void) {
     this.eventListeners.push(callback);
+    return () => {
+      this.eventListeners = this.eventListeners.filter(l => l !== callback);
+    };
   }
 
   async dispatchEvent(event: SocialEvent) {

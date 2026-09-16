@@ -1,6 +1,6 @@
 import { db, withDbRetry } from './index.js';
 import { users, posts, comments, likes, follows, notifications, bookmarks, conversations, conversationMembers, messages } from './schema.js';
-import { eq, desc, asc, inArray, and, or, ilike, sql, ne } from 'drizzle-orm';
+import { eq, desc, asc, inArray, and, or, ilike, sql, ne, isNull } from 'drizzle-orm';
 
 export const postSummaryColumns = {
   id: posts.id,
@@ -18,6 +18,8 @@ export const postSummaryColumns = {
   sharesCount: posts.sharesCount,
   viewsCount: posts.viewsCount,
   createdAt: posts.createdAt,
+  mediaUrl: posts.mediaUrl,
+  storageKey: posts.storageKey,
   content: sql<string>`CASE 
     WHEN ${posts.content} IS NULL THEN NULL
     WHEN ${posts.type} = 'text' THEN ${posts.content}
@@ -33,7 +35,11 @@ export async function getPostMedia(postId: string) {
     const res = await db.select({
       id: posts.id,
       content: posts.content,
-      type: posts.type
+      type: posts.type,
+      storageKey: posts.storageKey,
+      mediaUrl: posts.mediaUrl,
+      mimeType: posts.mimeType,
+      mediaSize: posts.mediaSize
     }).from(posts).where(eq(posts.id, postId)).limit(1);
     return res[0] || null;
   });
@@ -58,21 +64,33 @@ export async function getFeed(userId?: string, tab: 'foryou' | 'following' = 'fo
           .where(eq(follows.followerId, userId));
         
         const followingIds = followed.map(f => f.followingId);
-        if (followingIds.length === 0) {
-          return [];
-        }
+        // Include friends (followed creators) AND user's own posts
+        const allowedAuthorIds = Array.from(new Set([...followingIds, userId]));
 
         feedPosts = await db.select(postSummaryColumns)
           .from(posts)
-          .where(inArray(posts.authorId, followingIds))
+          .where(
+            and(
+              inArray(posts.authorId, allowedAuthorIds),
+              or(
+                eq(posts.authorId, userId),
+                ne(posts.visibility, 'private')
+              )
+            )
+          )
           .orderBy(desc(posts.createdAt))
           .limit(validLimit)
           .offset(offset);
       } else {
-        // For You: Algorithmic Feed ranked by dynamic engagement score:
-        // (likes * 3) + (comments * 4) + (reposts * 5) + (shares * 5) + (views * 0.5)
+        // For You: Algorithmic Feed ranked by dynamic engagement score, excluding private posts
         feedPosts = await db.select(postSummaryColumns)
           .from(posts)
+          .where(
+            or(
+              eq(posts.visibility, 'public'),
+              isNull(posts.visibility)
+            )
+          )
           .orderBy(
             desc(sql`(COALESCE(${posts.likesCount}, 0) * 3 + COALESCE(${posts.commentsCount}, 0) * 4 + COALESCE(${posts.repostsCount}, 0) * 5 + COALESCE(${posts.sharesCount}, 0) * 5 + COALESCE(${posts.viewsCount}, 0) * 0.5)`),
             desc(posts.createdAt)
@@ -135,7 +153,7 @@ export async function getFeed(userId?: string, tab: 'foryou' | 'following' = 'fo
   }
 }
 
-export async function getUserPosts(userId: string) {
+export async function getUserPosts(userId: string, viewerId?: string) {
   if (!userId || userId === 'undefined' || userId === 'null') return [];
   try {
     return await withDbRetry(async () => {
@@ -146,7 +164,19 @@ export async function getUserPosts(userId: string) {
         targetUid = userRows[0].uid;
       }
 
-      const userPosts = await db.select(postSummaryColumns).from(posts).where(eq(posts.authorId, targetUid)).orderBy(desc(posts.isPinned), desc(posts.createdAt)).limit(50);
+      const isOwner = viewerId && (viewerId === targetUid || viewerId === userRows[0]?.uid);
+      const whereCondition = isOwner
+        ? and(eq(posts.authorId, targetUid), ne(posts.visibility, 'private'))
+        : and(
+            eq(posts.authorId, targetUid),
+            or(eq(posts.visibility, 'public'), isNull(posts.visibility))
+          );
+
+      const userPosts = await db.select(postSummaryColumns)
+        .from(posts)
+        .where(whereCondition)
+        .orderBy(desc(posts.isPinned), desc(posts.createdAt))
+        .limit(50);
       if (userPosts.length === 0) return [];
       
       const author = userRows[0];
@@ -171,6 +201,45 @@ export async function getUserPosts(userId: string) {
     if (!isSocketReset) {
       console.error('Error fetching user posts in queries.ts:', err);
     }
+    return [];
+  }
+}
+
+export async function getUserPrivatePosts(userId: string) {
+  if (!userId || userId === 'undefined' || userId === 'null') return [];
+  try {
+    return await withDbRetry(async () => {
+      let targetUid = userId;
+      const userRows = await db.select().from(users).where(or(eq(users.uid, userId), eq(users.username, userId))).limit(1);
+      if (userRows[0]) {
+        targetUid = userRows[0].uid;
+      }
+
+      const userPosts = await db.select(postSummaryColumns)
+        .from(posts)
+        .where(and(eq(posts.authorId, targetUid), eq(posts.visibility, 'private')))
+        .orderBy(desc(posts.createdAt))
+        .limit(50);
+      if (userPosts.length === 0) return [];
+      
+      const author = userRows[0];
+      const authorData = author ? {
+        id: author.uid,
+        username: author.username || '',
+        displayName: author.displayName || '',
+        avatar: author.avatar || '',
+        bio: author.bio || '',
+        followersCount: author.followersCount || 0,
+        followingCount: author.followingCount || 0,
+      } : undefined;
+
+      return userPosts.map(post => ({
+        ...post,
+        author: authorData,
+        isLikedByMe: false
+      }));
+    });
+  } catch (err: any) {
     return [];
   }
 }
@@ -438,7 +507,10 @@ export async function processEvent(event: any) {
               text: commentText
             }).onConflictDoNothing();
             
-            await db.update(posts).set({ commentsCount: sql`COALESCE(${posts.commentsCount}, 0) + 1` }).where(eq(posts.id, postId));
+            await db.update(posts).set({ 
+              commentsCount: sql`COALESCE(${posts.commentsCount}, 0) + 1`,
+              viewsCount: sql`COALESCE(${posts.viewsCount}, 0) + 1`
+            }).where(eq(posts.id, postId));
 
             try {
               const post = await db.select().from(posts).where(eq(posts.id, postId)).limit(1);
@@ -464,7 +536,10 @@ export async function processEvent(event: any) {
         }).onConflictDoNothing();
 
         if (targetType === 'POST') {
-          await db.update(posts).set({ likesCount: sql`COALESCE(${posts.likesCount}, 0) + 1` }).where(eq(posts.id, objectId));
+          await db.update(posts).set({ 
+            likesCount: sql`COALESCE(${posts.likesCount}, 0) + 1`,
+            viewsCount: sql`COALESCE(${posts.viewsCount}, 0) + 1`
+          }).where(eq(posts.id, objectId));
           try {
             const post = await db.select().from(posts).where(eq(posts.id, objectId)).limit(1);
             if (post[0] && post[0].authorId && post[0].authorId !== authorId) {
@@ -496,7 +571,10 @@ export async function processEvent(event: any) {
         }
       } else if (operation === 'REPOST') {
         if (targetType === 'POST') {
-          await db.update(posts).set({ repostsCount: sql`COALESCE(${posts.repostsCount}, 0) + 1` }).where(eq(posts.id, objectId));
+          await db.update(posts).set({ 
+            repostsCount: sql`COALESCE(${posts.repostsCount}, 0) + 1`,
+            viewsCount: sql`COALESCE(${posts.viewsCount}, 0) + 1`
+          }).where(eq(posts.id, objectId));
           try {
             const post = await db.select().from(posts).where(eq(posts.id, objectId)).limit(1);
             if (post[0] && post[0].authorId && post[0].authorId !== authorId) {
@@ -513,7 +591,10 @@ export async function processEvent(event: any) {
         }
       } else if (operation === 'SHARE') {
         if (targetType === 'POST') {
-          await db.update(posts).set({ sharesCount: sql`COALESCE(${posts.sharesCount}, 0) + 1` }).where(eq(posts.id, objectId));
+          await db.update(posts).set({ 
+            sharesCount: sql`COALESCE(${posts.sharesCount}, 0) + 1`,
+            viewsCount: sql`COALESCE(${posts.viewsCount}, 0) + 1`
+          }).where(eq(posts.id, objectId));
         }
       }
 

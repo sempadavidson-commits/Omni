@@ -31,6 +31,7 @@ import { Post } from '../types';
 import { useAppContext } from '../context/AppContext';
 import { cn } from '../lib/utils';
 import { CommentModal } from './comments/CommentModal';
+import { HashtagParser } from './HashtagParser';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../lib/firebase';
 import { telemetry } from '../lib/telemetry';
@@ -79,7 +80,9 @@ function ThumbnailPickerModal({
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
                 extracted.push(dataUrl);
-              } catch (e) {}
+              } catch (e) {
+                console.warn('Frame extraction canvas error:', e);
+              }
             }
             resolve();
           };
@@ -322,6 +325,25 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
   const watchStartRef = useRef<number>(0);
   const totalWatchTimeRef = useRef<number>(0);
 
+  // View count incrementing logic on the server
+  const hasIncrementedViewRef = useRef<string | null>(null);
+
+  const incrementViewCountOnServer = async () => {
+    if (hasIncrementedViewRef.current === post.id) return;
+    hasIncrementedViewRef.current = post.id;
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      await fetch(`/api/posts/${post.id}/view`, {
+        method: 'POST',
+        headers
+      });
+    } catch (e) {
+      console.warn('Failed to increment view count on backend:', e);
+    }
+  };
+
   // Check if current user is the author
   const currentUid = currentUser?.id || currentUser?.uid || auth.currentUser?.uid;
   const postAuthorId = post.authorId || post.author?.id;
@@ -372,7 +394,9 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
           const data = await res.json();
           setIsFollowing(data.isFollowing);
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('Could not check follow status:', e);
+      }
     })();
     return () => { isMounted = false; };
   }, [currentUser, author?.id]);
@@ -391,16 +415,31 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
         creatorId: author?.id
       });
 
-      video.play().then(() => {
-        setIsPlaying(true);
-        telemetry.track({
-          type: 'view',
-          postId: post.id,
-          creatorId: author?.id
+      video.muted = isGlobalMuted;
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.then(() => {
+          setIsPlaying(true);
+          setIsBuffering(false);
+          telemetry.track({
+            type: 'view',
+            postId: post.id,
+            creatorId: author?.id
+          });
+          incrementViewCountOnServer();
+        }).catch((err) => {
+          // Unmuted autoplay blocked by browser policy, fallback to muted playback
+          video.muted = true;
+          setIsGlobalMuted(true);
+          video.play().then(() => {
+            setIsPlaying(true);
+            setIsBuffering(false);
+          }).catch((e) => {
+            console.warn('Video playback error on active post:', e);
+            setIsPlaying(false);
+          });
         });
-      }).catch(() => {
-        setIsPlaying(false);
-      });
+      }
     } else {
       if (watchStartRef.current > 0) {
         const watched = Date.now() - watchStartRef.current;
@@ -433,6 +472,13 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
     }
   }, [isActive, post.id, author?.id]);
 
+  // Track views on image or text posts when they are active
+  useEffect(() => {
+    if (isActive && post.type !== 'video') {
+      incrementViewCountOnServer();
+    }
+  }, [isActive, post.id, post.type]);
+
   const handleTimeUpdate = () => {
     if (!videoRef.current) return;
     const { currentTime, duration } = videoRef.current;
@@ -450,16 +496,22 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
   };
 
   const handleRetryVideo = () => {
-    if (!videoRef.current) return;
     setHasError(false);
     setIsBuffering(true);
-    videoRef.current.load();
-    videoRef.current.play().then(() => {
-      setIsPlaying(true);
-      setIsBuffering(false);
-    }).catch(() => {
-      setIsBuffering(false);
-    });
+    setTimeout(() => {
+      if (videoRef.current) {
+        videoRef.current.load();
+        videoRef.current.play().then(() => {
+          setIsPlaying(true);
+          setIsBuffering(false);
+        }).catch((err) => {
+          console.warn('Retry video play warning:', err);
+          setIsBuffering(false);
+        });
+      } else {
+        setIsBuffering(false);
+      }
+    }, 100);
   };
 
   const handleLike = () => {
@@ -544,15 +596,31 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
       try {
         const token = await auth.currentUser?.getIdToken();
         if (token) {
-          await fetch(`/api/posts/${post.id}/repost`, {
+          const res = await fetch(`/api/posts/${post.id}/repost`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${token}`
             }
           });
+          if (!res.ok) {
+            // Rollback optimistic state
+            setIsReposted(!nextReposted);
+            setRepostsCount(prev => (!nextReposted ? prev + 1 : Math.max(0, prev - 1)));
+            setActionFeedbackToast("Failed to update repost");
+            setTimeout(() => setActionFeedbackToast(null), 2500);
+            return;
+          }
         }
-      } catch (err) {}
+      } catch (err) {
+        console.error('Repost error:', err);
+        // Rollback optimistic state
+        setIsReposted(!nextReposted);
+        setRepostsCount(prev => (!nextReposted ? prev + 1 : Math.max(0, prev - 1)));
+        setActionFeedbackToast("Network error updating repost");
+        setTimeout(() => setActionFeedbackToast(null), 2500);
+        return;
+      }
 
       if (nextReposted) {
         telemetry.track({ type: 'share', postId: post.id, creatorId: author.id });
@@ -597,11 +665,21 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
       telemetry.track({ type: 'follow', creatorId: author.id });
       try {
         const token = await auth.currentUser?.getIdToken();
-        await fetch(`/api/follow/${author.id}`, {
+        const res = await fetch(`/api/follow/${author.id}`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` }
         });
-      } catch (err) {}
+        if (!res.ok) {
+          setIsFollowing(false);
+          setActionFeedbackToast("Failed to follow creator");
+          setTimeout(() => setActionFeedbackToast(null), 2500);
+        }
+      } catch (err) {
+        console.error('Follow error:', err);
+        setIsFollowing(false);
+        setActionFeedbackToast("Network error while following");
+        setTimeout(() => setActionFeedbackToast(null), 2500);
+      }
     });
   };
 
@@ -619,12 +697,18 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
         title: `Omni - @${author.username || 'creator'}`,
         text: post.caption || 'Check out this video on Omni!',
         url: shareUrl
-      }).catch(() => {});
+      }).catch(() => {
+        // Fallback to clipboard if share was cancelled or unavailable in iframe
+        navigator.clipboard.writeText(shareUrl).then(() => {
+          setCopiedToast(true);
+          setTimeout(() => setCopiedToast(false), 2000);
+        }).catch((clipErr) => console.warn('Clipboard write error:', clipErr));
+      });
     } else {
       navigator.clipboard.writeText(shareUrl).then(() => {
         setCopiedToast(true);
         setTimeout(() => setCopiedToast(false), 2000);
-      });
+      }).catch((clipErr) => console.warn('Clipboard write error:', clipErr));
     }
     setIsQuickActionsOpen(false);
   };
@@ -646,8 +730,15 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
         post.isPinned = newPinned;
         setActionFeedbackToast(newPinned ? '📌 Post pinned to profile!' : 'Post unpinned');
         setTimeout(() => setActionFeedbackToast(null), 2500);
+      } else {
+        setActionFeedbackToast('Failed to update pin status');
+        setTimeout(() => setActionFeedbackToast(null), 2500);
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('Pin post error:', err);
+      setActionFeedbackToast('Error updating pin');
+      setTimeout(() => setActionFeedbackToast(null), 2500);
+    }
   };
 
   const handleDeletePost = async () => {
@@ -663,8 +754,15 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
         setTimeout(() => {
           onHidePost?.(post.id);
         }, 600);
+      } else {
+        setActionFeedbackToast('Failed to delete post');
+        setTimeout(() => setActionFeedbackToast(null), 2500);
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('Delete post error:', err);
+      setActionFeedbackToast('Error deleting post');
+      setTimeout(() => setActionFeedbackToast(null), 2500);
+    }
   };
 
   const handleDeleteAndEdit = async () => {
@@ -680,7 +778,9 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
-    } catch (e) {}
+    } catch (e) {
+      console.error('Delete and edit error:', e);
+    }
 
     navigate('/create', {
       state: {
@@ -708,8 +808,15 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
         post.caption = newCaption;
         setActionFeedbackToast('Caption updated!');
         setTimeout(() => setActionFeedbackToast(null), 2500);
+      } else {
+        setActionFeedbackToast('Failed to update caption');
+        setTimeout(() => setActionFeedbackToast(null), 2500);
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('Update caption error:', err);
+      setActionFeedbackToast('Error updating caption');
+      setTimeout(() => setActionFeedbackToast(null), 2500);
+    }
   };
 
   const handleSaveThumbnail = async (newThumbnailUrl: string) => {
@@ -728,13 +835,70 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
         post.thumbnailUrl = newThumbnailUrl;
         setActionFeedbackToast('Video cover frame updated!');
         setTimeout(() => setActionFeedbackToast(null), 2500);
+      } else {
+        setActionFeedbackToast('Failed to update cover frame');
+        setTimeout(() => setActionFeedbackToast(null), 2500);
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('Update thumbnail error:', err);
+      setActionFeedbackToast('Error updating cover frame');
+      setTimeout(() => setActionFeedbackToast(null), 2500);
+    }
   };
 
   const handleDownloadVideo = () => {
     setIsQuickActionsOpen(false);
     startBackgroundDownloadVideo(post);
+  };
+
+  const handleToggleVisibility = async () => {
+    setIsQuickActionsOpen(false);
+    const nextVisibility = post.visibility === 'private' ? 'public' : 'private';
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch(`/api/posts/${post.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ visibility: nextVisibility })
+      });
+      if (res.ok) {
+        post.visibility = nextVisibility;
+        setActionFeedbackToast(nextVisibility === 'private' ? 'Post is now hidden from public (locked tab only)' : 'Post is now public');
+        setTimeout(() => setActionFeedbackToast(null), 3000);
+      } else {
+        setActionFeedbackToast('Failed to update post visibility');
+        setTimeout(() => setActionFeedbackToast(null), 2500);
+      }
+    } catch (e) {
+      setActionFeedbackToast('Error updating post visibility');
+      setTimeout(() => setActionFeedbackToast(null), 2500);
+    }
+  };
+
+  const handleMakeStatus = async () => {
+    setIsQuickActionsOpen(false);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch(`/api/posts/${post.id}/make-status`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        setActionFeedbackToast('Added to your 24h Status Stories!');
+        setTimeout(() => setActionFeedbackToast(null), 3000);
+      } else {
+        setActionFeedbackToast('Failed to add status video');
+        setTimeout(() => setActionFeedbackToast(null), 2500);
+      }
+    } catch (e) {
+      setActionFeedbackToast('Error adding status video');
+      setTimeout(() => setActionFeedbackToast(null), 2500);
+    }
   };
 
   // Handle pointer down for 2X Speed (Left/Right) or Long Press Quick Actions (Middle)
@@ -880,50 +1044,66 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
         onPointerLeave={handlePointerUpOrCancel}
         onClick={handleContainerTap}
       >
-        {post.type === 'video' ? (
-          hasError ? (
-            <div className="flex flex-col items-center justify-center text-slate-400 p-6 text-center">
-              <AlertCircle size={36} className="text-rose-400 mb-2" />
-              <p className="text-xs text-white font-semibold mb-1">Video temporarily unavailable</p>
-              <p className="text-[11px] text-slate-500 max-w-xs mb-3">
-                Check your network connection or tap retry to reload stream.
-              </p>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleRetryVideo();
+        {(() => {
+          const rawSource = post.mediaUrl || post.content;
+          const mediaSource = (rawSource && (rawSource.startsWith('http') || rawSource.startsWith('/') || rawSource.startsWith('blob:') || rawSource.startsWith('data:')))
+            ? rawSource
+            : `/api/posts/${post.id}/media`;
+
+          if (post.type === 'video') {
+            return hasError ? (
+              <div className="flex flex-col items-center justify-center text-slate-400 p-6 text-center">
+                <AlertCircle size={36} className="text-rose-400 mb-2" />
+                <p className="text-xs text-white font-semibold mb-1">Video temporarily unavailable</p>
+                <p className="text-[11px] text-slate-500 max-w-xs mb-3">
+                  Check your network connection or tap retry to reload stream.
+                </p>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRetryVideo();
+                  }}
+                  className="px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/[0.15] text-xs font-bold text-cyan-300 flex items-center gap-1.5 transition-colors"
+                >
+                  <RefreshCw size={12} /> Retry
+                </button>
+              </div>
+            ) : (
+              <video
+                ref={videoRef}
+                src={mediaSource}
+                className="w-full h-full object-cover"
+                loop
+                muted={isGlobalMuted}
+                playsInline
+                preload="auto"
+                onTimeUpdate={handleTimeUpdate}
+                onEnded={handleEnded}
+                onWaiting={() => setIsBuffering(true)}
+                onPlaying={() => {
+                  setIsBuffering(false);
+                  setHasError(false);
                 }}
-                className="px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/[0.15] text-xs font-bold text-cyan-300 flex items-center gap-1.5 transition-colors"
-              >
-                <RefreshCw size={12} /> Retry
-              </button>
-            </div>
-          ) : (
-            <video
-              ref={videoRef}
-              src={post.content}
-              className="w-full h-full object-cover"
-              loop
-              muted={isGlobalMuted}
-              playsInline
-              preload="metadata"
-              onTimeUpdate={handleTimeUpdate}
-              onEnded={handleEnded}
-              onWaiting={() => setIsBuffering(true)}
-              onPlaying={() => setIsBuffering(false)}
-              onError={() => setHasError(true)}
-            />
-          )
-        ) : (
-          post.content && (
-            <img
-              src={post.content}
-              alt={post.caption || 'Post image'}
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
-          )
-        )}
+                onError={() => {
+                  const mediaErr = videoRef.current?.error;
+                  // Ignore aborted error (code 1 MEDIA_ERR_ABORTED) when paused, scrolled, or switching sources
+                  if (mediaErr && mediaErr.code === 1) return;
+                  console.warn('PostCard video element onError fired:', mediaErr?.code, mediaErr?.message);
+                  setHasError(true);
+                }}
+              />
+            );
+          } else {
+            return (
+              <img
+                src={mediaSource}
+                alt={post.caption || 'Post image'}
+                className="w-full h-full object-cover"
+                loading="lazy"
+              />
+            );
+          }
+        })()}
 
         {/* Ambient Darkened Vignette for readable overlays */}
         <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-black/55 via-transparent via-55% to-black/95" />
@@ -1024,7 +1204,7 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
             }}
             className="inline-flex items-center gap-2 cursor-pointer group"
           >
-            <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-800 shadow transition-colors shrink-0">
+            <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-800 shadow transition-all shrink-0 ring-2 ring-cyan-400 ring-offset-1 ring-offset-black">
               <img
                 src={author.avatar}
                 alt={author.displayName || author.username || 'Creator'}
@@ -1040,13 +1220,13 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
             </span>
           </div>
 
-          {/* Clean Caption */}
-          {cleanCaption && (
+          {/* Caption with Clickable Hashtags */}
+          {post.caption && (
             <div className="text-xs sm:text-sm text-slate-100 font-normal leading-relaxed drop-shadow">
               <p className={cn("whitespace-pre-wrap transition-all", !captionExpanded && "line-clamp-2")}>
-                {cleanCaption}
+                <HashtagParser text={post.caption} />
               </p>
-              {cleanCaption.length > 90 && (
+              {post.caption.length > 90 && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1061,12 +1241,19 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
           )}
 
           {/* Audio Track Metadata Pill */}
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/40 backdrop-blur-md text-xs text-slate-200 w-fit drop-shadow">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/search?q=${encodeURIComponent(author.username || author.displayName || 'music')}`);
+            }}
+            className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/40 backdrop-blur-md text-xs text-slate-200 w-fit drop-shadow hover:bg-black/60 active:scale-95 transition-all text-left"
+            title="Explore audio"
+          >
             <Music2 size={13} className="text-cyan-400 animate-spin" style={{ animationDuration: '6s' }} />
             <span className="font-medium tracking-wide truncate max-w-[180px]">
               Original Audio — {author.displayName || author.username || 'creator'}
             </span>
-          </div>
+          </button>
         </div>
 
         {/* Right: Vertical Interaction Rail */}
@@ -1217,7 +1404,7 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
             aria-label="Post options"
             className="flex flex-col items-center group focus:outline-none mt-1"
           >
-            <div className="p-1.5 rounded-full text-white hover:text-cyan-300 transition-colors drop-shadow active:scale-90 bg-black/40 backdrop-blur-md border border-white/10">
+            <div className="p-1.5 rounded-full text-white hover:text-cyan-300 transition-colors drop-shadow active:scale-90 bg-black/40 backdrop-blur-md">
               <MoreVertical size={20} strokeWidth={2.5} className="text-cyan-400" />
             </div>
             <span className="text-[10px] font-medium text-slate-300 drop-shadow -mt-0.5">
@@ -1271,6 +1458,24 @@ export function PostCard({ post, isActive = true, compact = false, onHidePost }:
                   <Pin size={18} className="text-amber-400" />
                   {post.isPinned ? 'Unpin Post' : 'Pin Post to Profile'}
                 </button>
+
+                <button
+                  onClick={handleToggleVisibility}
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-white/[0.05] text-left text-sm font-semibold text-white transition-colors"
+                >
+                  <EyeOff size={18} className="text-purple-400" />
+                  {post.visibility === 'private' ? 'Make Post Public' : 'Hide Post from Public'}
+                </button>
+
+                {post.type === 'video' && (
+                  <button
+                    onClick={handleMakeStatus}
+                    className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-white/[0.05] text-left text-sm font-semibold text-cyan-300 transition-colors"
+                  >
+                    <Plus size={18} className="text-cyan-400" />
+                    Turn into Status Video (24h)
+                  </button>
+                )}
 
                 <button
                   onClick={() => {

@@ -226,29 +226,8 @@ export function Live() {
   const handleWatchStream = (session: LiveSession) => {
     setActiveSession(session);
     setSessionLikes(session.likesCount || 0);
-    setViewerCount(session.viewersCount || 42);
-    setLiveMessages([
-      {
-        id: 'msg_1',
-        liveId: session.id,
-        userId: 'usr_viewer_1',
-        username: 'alex_vibes',
-        displayName: 'Alex',
-        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80',
-        text: 'Audio is super clean! 🚀',
-        createdAt: new Date(Date.now() - 30000).toISOString(),
-      },
-      {
-        id: 'msg_2',
-        liveId: session.id,
-        userId: 'usr_viewer_2',
-        username: 'kira_light',
-        displayName: 'Kira',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
-        text: 'Loving this setup 🔥',
-        createdAt: new Date(Date.now() - 15000).toISOString(),
-      }
-    ]);
+    setViewerCount(session.viewersCount || 1);
+    setLiveMessages([]);
     setViewMode('watch');
   };
 
@@ -277,10 +256,24 @@ export function Live() {
     setFloatingHearts((prev) => [...prev.slice(-15), newHeart]);
     setSessionLikes((prev) => prev + 1);
 
-    setLiveStats((prev) => ({
-      ...prev,
-      totalLiveLikes: prev.totalLiveLikes + 1,
-    }));
+    setLiveStats((prev) => {
+      const newLikes = prev.totalLiveLikes + 1;
+      const updatedMilestones = prev.milestones.map(m => {
+        if (m.id === 'm3') {
+          return {
+            ...m,
+            progress: Math.min(m.target, newLikes),
+            isUnlocked: newLikes >= m.target
+          };
+        }
+        return m;
+      });
+      return {
+        ...prev,
+        totalLiveLikes: newLikes,
+        milestones: updatedMilestones
+      };
+    });
   };
 
   const handleSendLiveComment = () => {
@@ -687,7 +680,28 @@ export function Live() {
               onClick={(e) => {
                 e.stopPropagation();
                 stopCamera();
+                if (activeSession && activeSession.hostId === (currentUser?.id || 'me')) {
+                  setLiveStats((prev) => {
+                    const newLivesDid = prev.livesDid + 1;
+                    const updatedMilestones = prev.milestones.map(m => {
+                      if (m.id === 'm1' || m.id === 'm5') {
+                        return {
+                          ...m,
+                          progress: Math.min(m.target, newLivesDid),
+                          isUnlocked: newLivesDid >= m.target
+                        };
+                      }
+                      return m;
+                    });
+                    return {
+                      ...prev,
+                      livesDid: newLivesDid,
+                      milestones: updatedMilestones
+                    };
+                  });
+                }
                 setViewMode('browse');
+                setActiveSession(null);
               }}
               className="p-2 rounded-full bg-black/50 text-white hover:bg-rose-500/80 backdrop-blur-md transition-colors"
             >

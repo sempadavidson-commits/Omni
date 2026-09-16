@@ -11,16 +11,24 @@ import { cn } from '../lib/utils';
 
 export function Home() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = searchParams.get('tab') === 'following' ? 'following' : 'foryou';
-  const [activeTab, setActiveTab] = useState<'foryou' | 'following'>(initialTab);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    currentUser,
+    requireAuth,
+    feedPosts: posts,
+    setFeedPosts: setPosts,
+    feedActiveIndex: activeIndex,
+    setFeedActiveIndex: setActiveIndex,
+    feedPage: page,
+    setFeedPage: setPage,
+    feedHasMore: hasMore,
+    setFeedHasMore: setHasMore,
+    feedActiveTab: activeTab,
+    setFeedActiveTab: setActiveTab
+  } = useAppContext();
+
+  const [loading, setLoading] = useState(posts.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const { currentUser, requireAuth } = useAppContext();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -30,7 +38,7 @@ export function Home() {
     } else if (tabParam === 'foryou' && activeTab !== 'foryou') {
       setActiveTab('foryou');
     }
-  }, [searchParams]);
+  }, [searchParams, activeTab, setActiveTab]);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +52,9 @@ export function Home() {
             try {
               const token = await auth.currentUser.getIdToken();
               headers['Authorization'] = `Bearer ${token}`;
-            } catch (tokenErr) {}
+            } catch (tokenErr) {
+              console.warn('Could not get auth token for feed fetch:', tokenErr);
+            }
           }
           
           const res = await fetch(`/api/feed?tab=${tab}&page=${pageToFetch}&limit=10`, { headers });
@@ -56,11 +66,17 @@ export function Home() {
               if (isAppend) {
                 setPosts(prev => {
                   const existingIds = new Set(prev.map(p => p.id));
-                  const newUnique = incoming.filter(p => !existingIds.has(p.id));
+                  const newUnique = incoming.filter(p => p.id && !existingIds.has(p.id));
                   return [...prev, ...newUnique];
                 });
               } else {
-                setPosts(incoming);
+                const seen = new Set<string>();
+                const uniqueIncoming = incoming.filter(p => {
+                  if (!p.id || seen.has(p.id)) return false;
+                  seen.add(p.id);
+                  return true;
+                });
+                setPosts(uniqueIncoming);
               }
               setHasMore(incoming.length >= 10);
               setPage(pageToFetch);
@@ -84,14 +100,38 @@ export function Home() {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, []);
+  }, [setPosts, setHasMore, setPage]);
+
+  // Prevent initial fetch from overwriting feed states when navigating back
+  const isInitialMountRef = useRef(true);
 
   useEffect(() => {
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+      if (posts.length > 0) {
+        setLoading(false);
+        return;
+      }
+    }
     setLoading(true);
     setPage(0);
     setHasMore(true);
     fetchFeed(activeTab, 0, false);
-  }, [activeTab, fetchFeed]);
+  }, [activeTab, fetchFeed, posts.length, setPage, setHasMore]);
+
+  // Restore scroll position to active index on mount
+  useEffect(() => {
+    if (containerRef.current && posts.length > 0 && activeIndex > 0) {
+      const container = containerRef.current;
+      const timer = setTimeout(() => {
+        const targetElement = container.querySelector(`[data-index="${activeIndex}"]`) as HTMLElement;
+        if (targetElement) {
+          targetElement.scrollIntoView({ block: 'start' });
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [posts.length, activeIndex]);
 
   // Listen to new posts created locally via Sync Engine
   useEffect(() => {
@@ -109,11 +149,17 @@ export function Home() {
           viewsCount: 0,
           author: currentUser || undefined,
         };
-        setPosts(prev => [newPost, ...prev]);
+        setPosts(prev => {
+          if (prev.some(p => p.id === newPost.id)) return prev;
+          return [newPost, ...prev];
+        });
       }
     };
-    globalSyncEngine.onEvent(handleEvent);
-  }, [currentUser]);
+    const unsubscribe = globalSyncEngine.onEvent(handleEvent);
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [currentUser, setPosts]);
 
   // Set up IntersectionObserver to update activeIndex on visibility
   useEffect(() => {
@@ -143,23 +189,17 @@ export function Home() {
     return () => {
       observer.disconnect();
     };
-  }, [posts, activeIndex]);
+  }, [posts, activeIndex, setActiveIndex]);
 
-  // Track active visible post via scroll listener and trigger pagination
+  // Track pagination when reaching near end
   const handleScroll = () => {
     if (!containerRef.current) return;
-    const { scrollTop, clientHeight } = containerRef.current;
-    if (clientHeight > 0) {
-      const newIndex = Math.round(scrollTop / clientHeight);
-      if (newIndex !== activeIndex && newIndex >= 0 && newIndex < posts.length) {
-        setActiveIndex(newIndex);
-      }
-
-      // Trigger pagination when reaching near end
-      if (newIndex >= posts.length - 2 && hasMore && !loadingMore && !loading) {
-        setLoadingMore(true);
-        fetchFeed(activeTab, page + 1, true);
-      }
+    const { scrollTop, clientHeight, scrollHeight } = containerRef.current;
+    
+    // Trigger pagination when reaching near bottom (less than 400px remaining)
+    if (scrollHeight - scrollTop - clientHeight < 400 && hasMore && !loadingMore && !loading) {
+      setLoadingMore(true);
+      fetchFeed(activeTab, page + 1, true);
     }
   };
 
@@ -185,7 +225,9 @@ export function Home() {
             setFollowedLiveUsers(liveOnly);
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('Could not fetch followed live users:', e);
+      }
     })();
     return () => { isMounted = false; };
   }, [currentUser]);
@@ -308,7 +350,7 @@ export function Home() {
         ) : posts.length > 0 ? (
           posts.map((post, idx) => (
             <div
-              key={post.id}
+              key={`${post.id}-${idx}`}
               data-post-card="true"
               data-index={idx}
               className="w-full h-full snap-start snap-always shrink-0 relative"
@@ -335,7 +377,7 @@ export function Home() {
             <p className="text-sm text-slate-400 max-w-xs mb-6 leading-relaxed">
               {activeTab === 'following'
                 ? 'Follow your favorite creators to see their latest videos and updates in this feed.'
-                : 'Be the pioneer to publish the first story on Omni!'}
+                : 'Be the pioneer to post the first video on Omni!'}
             </p>
 
             <div className="flex items-center gap-3">

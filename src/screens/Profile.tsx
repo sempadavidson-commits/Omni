@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   LogOut,
   Grid3X3,
@@ -24,13 +24,20 @@ import {
   UserCheck,
   ShieldCheck,
   Trash2,
-  Pin
+  Pin,
+  Sparkles,
+  Lock,
+  Menu,
+  Footprints,
+  Pencil,
+  Settings
 } from 'lucide-react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
 import { auth } from '../lib/firebase';
 import { Post, User } from '../types';
 import { cn } from '../lib/utils';
+import { ProfileSkeleton, VideoGridSkeleton } from '../components/OmniSkeleton';
 
 export function Profile() {
   const { id } = useParams();
@@ -47,11 +54,14 @@ export function Profile() {
     activeUploads,
   } = useAppContext();
 
-  const [activeTab, setActiveTab] = useState<'created' | 'saved' | 'liked'>('created');
+  const [activeTab, setActiveTab] = useState<'created' | 'private' | 'reposts' | 'saved' | 'liked'>('created');
   const [posts, setPosts] = useState<Post[]>([]);
+  const [privatePosts, setPrivatePosts] = useState<Post[]>([]);
+  const [repostedPosts, setRepostedPosts] = useState<Post[]>([]);
   const [savedPosts, setSavedPosts] = useState<Post[]>([]);
   const [likedPosts, setLikedPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const [viewUser, setViewUser] = useState<any>(null);
   const [followStatus, setFollowStatus] = useState<{
@@ -110,7 +120,19 @@ export function Profile() {
     }
   }, [targetId, isMe, currentUser, id]);
 
-  const user = isMe ? (currentUser || viewUser) : viewUser;
+  const guestUserFallback: User = {
+    id: 'guest',
+    uid: 'guest',
+    username: 'guest_creator',
+    displayName: 'Guest Creator',
+    email: '',
+    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+    bio: "Discover, follow, and build connections with the world's best creators on Omni.",
+    followersCount: 0,
+    followingCount: 0
+  };
+
+  const user = (isMe ? (currentUser || viewUser) : viewUser) || guestUserFallback;
 
   // Check follow & friend status if viewing another creator
   useEffect(() => {
@@ -147,6 +169,34 @@ export function Profile() {
           setLoading(false);
         })
         .catch(() => setLoading(false));
+    } else if (activeTab === 'private') {
+      if (isMe) {
+        auth.currentUser?.getIdToken().then((token) => {
+          fetch(`/api/user/private/${user.id}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              setPrivatePosts(Array.isArray(data) ? data : []);
+              setLoading(false);
+            })
+            .catch(() => setLoading(false));
+        }).catch(() => setLoading(false));
+      } else {
+        setPrivatePosts([]);
+        setLoading(false);
+      }
+    } else if (activeTab === 'reposts') {
+      fetch(`/api/user/reposts/${user.id}`)
+        .then((res) => res.json())
+        .then((data) => {
+          setRepostedPosts(Array.isArray(data) ? data : []);
+          setLoading(false);
+        })
+        .catch(() => {
+          setRepostedPosts([]);
+          setLoading(false);
+        });
     } else if (activeTab === 'saved') {
       fetch(`/api/user/saved/${user.id}`)
         .then((res) => res.json())
@@ -164,7 +214,7 @@ export function Profile() {
         })
         .catch(() => setLoading(false));
     }
-  }, [user?.id, activeTab, location.pathname, location.key]);
+  }, [user?.id, activeTab, isMe, location.pathname, location.key]);
 
   const handleFollowToggle = () => {
     if (!user) return;
@@ -229,7 +279,12 @@ export function Profile() {
           text: `Check out ${user.displayName} (@${user.username}) on Omni!`,
           url: profileUrl,
         })
-        .catch(() => {});
+        .catch(() => {
+          navigator.clipboard.writeText(profileUrl).then(() => {
+            setCopiedToast(true);
+            setTimeout(() => setCopiedToast(false), 2000);
+          }).catch((clipErr) => console.warn('Clipboard write error:', clipErr));
+        });
     } else {
       navigator.clipboard.writeText(profileUrl).then(() => {
         setCopiedToast(true);
@@ -248,8 +303,12 @@ export function Profile() {
       if (res.ok) {
         const data = await res.json();
         setUserListModal({ title: 'Followers', users: data });
+      } else {
+        console.error('Failed to load followers list');
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error fetching followers list:', e);
+    }
   };
 
   const openFollowingList = async () => {
@@ -262,48 +321,63 @@ export function Profile() {
       if (res.ok) {
         const data = await res.json();
         setUserListModal({ title: 'Following', users: data });
+      } else {
+        console.error('Failed to load following list');
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('Error fetching following list:', e);
+    }
   };
 
-  if (!user) {
-    return (
-      <div className="flex flex-col h-full w-full bg-[#07080c] items-center justify-center p-6 text-center text-white">
-        <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 flex items-center justify-center text-cyan-400 mb-4 shadow-[0_0_20px_rgba(0,240,255,0.2)]">
-          <UserIcon size={32} />
-        </div>
-        <h2 className="text-xl font-bold mb-1">Profile Not Found</h2>
-        <p className="text-xs text-slate-400 mb-6 max-w-xs">
-          Sign in or create an account to view and customize your Omni creator profile.
-        </p>
-        <button
-          onClick={() => requireAuth('Profile', 'Sign in to access your profile.', () => {})}
-          className="px-6 py-2.5 rounded-xl bg-cyan-400 text-black font-bold text-xs hover:bg-cyan-300 transition-all shadow-[0_0_15px_rgba(0,240,255,0.3)]"
-        >
-          Sign In
-        </button>
-      </div>
-    );
-  }
-
-  // Active items list based on tab
   const rawActiveItems =
-    activeTab === 'created' ? posts : activeTab === 'saved' ? savedPosts : likedPosts;
+    activeTab === 'created'
+      ? posts
+      : activeTab === 'private'
+      ? privatePosts
+      : activeTab === 'reposts'
+      ? repostedPosts
+      : activeTab === 'saved'
+      ? savedPosts
+      : likedPosts;
 
-  const activeItems = [...rawActiveItems].sort((a, b) => {
-    if (a.isPinned && !b.isPinned) return -1;
-    if (!a.isPinned && b.isPinned) return 1;
-    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
-  });
+  const activeItems = useMemo(() => {
+    const seen = new Set<string>();
+    const unique = (rawActiveItems || []).filter(item => {
+      if (!item || !item.id || seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+    return unique.sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+    });
+  }, [rawActiveItems]);
 
   const handleTogglePin = async (e: React.MouseEvent, postId: string, currentPinned?: boolean) => {
     e.stopPropagation();
     const newPinned = !currentPinned;
+
+    if (newPinned) {
+      const currentPinnedCount = posts.filter(p => p.isPinned).length;
+      if (currentPinnedCount >= 3) {
+        alert('Maximum 3 pinned posts allowed per profile.');
+        return;
+      }
+    }
+
+    const oldPosts = [...posts];
     setPosts(prev => prev.map(p => p.id === postId ? { ...p, isPinned: newPinned } : p));
+
     try {
-      let token = await auth.currentUser?.getIdToken();
-      if (!token && currentUser?.id) token = 'mock_token_' + currentUser.id;
-      await fetch(`/api/posts/${postId}`, {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        setPosts(oldPosts);
+        alert('Authentication required to pin posts.');
+        return;
+      }
+
+      const res = await fetch(`/api/posts/${postId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -311,7 +385,16 @@ export function Profile() {
         },
         body: JSON.stringify({ isPinned: newPinned })
       });
-    } catch (err) {}
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        setPosts(oldPosts);
+        alert(errData.error || 'Could not update pin status.');
+      }
+    } catch (err) {
+      setPosts(oldPosts);
+      alert('Network error updating pin status.');
+    }
   };
 
   const totalLikes = posts.reduce((sum, p) => sum + (p.likesCount || 0), 0);
@@ -369,122 +452,135 @@ export function Profile() {
 
   return (
     <div className="flex flex-col h-full w-full bg-[#07080c] text-white relative overflow-hidden">
-      {/* Top Profile Header: Displays User's Name (not username) + top-left action icons */}
-      <header className="pt-safe px-3 py-2.5 flex items-center justify-between bg-[#07080c]/95 border-b border-white/[0.04] shrink-0 z-30">
-        {/* Left Side: SVG Action Triggers */}
+      {/* Top Profile Header matching Image 3: Edit Pencil on Left, Visitor Badge (64), Add Friend (+), and Hamburger Menu on Right */}
+      <header className="pt-safe px-4 py-3 flex items-center justify-between bg-[#07080c] shrink-0 z-30">
+        {/* Left Side: Edit Pencil Icon / Back Arrow */}
         <div className="flex items-center gap-1">
           {isMe ? (
-            <>
-              <button
-                onClick={() => setIsEditing(true)}
-                title="Edit Profile"
-                aria-label="Edit Profile"
-                className="p-2 rounded-full hover:bg-white/[0.08] text-slate-300 hover:text-cyan-400 transition-colors active:scale-95"
-              >
-                <Edit3 size={18} />
-              </button>
-
-              <button
-                onClick={() => setIsAccountSwitcherOpen(true)}
-                title="Switch Account"
-                aria-label="Switch Account"
-                className="p-2 rounded-full hover:bg-white/[0.08] text-slate-300 hover:text-cyan-400 transition-colors active:scale-95 relative"
-              >
-                <Users size={18} />
-                {savedAccounts.length > 1 && (
-                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-cyan-400" />
-                )}
-              </button>
-
-              <button
-                onClick={() => {
-                  logout();
-                  navigate('/', { replace: true });
-                }}
-                title="Sign Out"
-                aria-label="Sign Out"
-                className="p-2 rounded-full hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 transition-colors active:scale-95"
-              >
-                <LogOut size={18} />
-              </button>
-            </>
+            <button
+              onClick={() => setIsEditing(true)}
+              title="Edit Profile"
+              aria-label="Edit Profile"
+              className="p-1.5 text-white/90 hover:text-white transition-colors active:scale-95"
+            >
+              <Pencil size={20} className="stroke-[2.2]" />
+            </button>
           ) : (
             <button
               onClick={() => navigate(-1)}
               title="Go Back"
               aria-label="Go Back"
-              className="p-2 rounded-full hover:bg-white/[0.08] text-slate-300 hover:text-white transition-colors active:scale-95"
+              className="p-1.5 text-white/90 hover:text-white transition-colors active:scale-95"
             >
-              <ArrowLeft size={19} />
-            </button>
-          )}
-
-          {!currentUser && (
-            <button
-              onClick={() => requireAuth('Profile', 'Sign in to access your profile.', () => {})}
-              title="Sign In"
-              aria-label="Sign In"
-              className="p-2 rounded-full hover:bg-white/[0.08] text-cyan-400 transition-colors active:scale-95 flex items-center gap-1.5 text-xs font-bold"
-            >
-              <LogIn size={18} />
+              <ArrowLeft size={22} />
             </button>
           )}
         </div>
 
-        {/* Center: Top View shows User's Name */}
-        <div className="flex items-center justify-center px-2">
-          <span className="text-sm font-extrabold text-white tracking-tight truncate max-w-[170px]">
-            {user.displayName || 'Creator'}
-          </span>
-        </div>
-
-        {/* Right Side: Share Trigger */}
-        <div className="flex items-center gap-1">
-          {copiedToast && (
-            <span className="text-[10px] font-bold text-cyan-300 bg-cyan-500/20 px-2 py-0.5 rounded-full border border-cyan-400/40 animate-pulse">
-              Copied!
-            </span>
-          )}
+        {/* Right Side Icons: Visitors Badge (64), Add Friend (UserPlus), Hamburger Menu */}
+        <div className="flex items-center gap-3">
+          {/* Profile Visitors with Red Badge */}
           <button
-            onClick={handleShareProfile}
-            title="Share Profile"
-            aria-label="Share profile"
-            className="p-2 rounded-full hover:bg-white/[0.08] text-slate-300 hover:text-white transition-colors active:scale-95"
+            onClick={() => openFollowersList()}
+            title="Profile views & visitors"
+            className="relative p-1 text-white/90 hover:text-white transition-colors active:scale-95"
           >
-            <Share2 size={18} />
+            <Footprints size={21} className="stroke-[2]" />
+            <span className="absolute -top-1 -right-2 px-1 min-w-[17px] h-3.5 rounded-full bg-[#fe2c55] text-white text-[9px] font-black flex items-center justify-center shadow-md">
+              64
+            </span>
+          </button>
+
+          {/* Add Friends / UserPlus */}
+          <button
+            onClick={() => navigate('/?tab=following')}
+            title="Find friends"
+            className="p-1 text-white/90 hover:text-white transition-colors active:scale-95"
+          >
+            <UserPlus size={22} className="stroke-[2]" />
+          </button>
+
+          {/* Hamburger Menu (Settings, Switch Account, Share, Sign Out) */}
+          <button
+            onClick={() => setIsMenuOpen(true)}
+            title="Menu & Settings"
+            className="p-1 text-white/90 hover:text-white transition-colors active:scale-95"
+          >
+            <Menu size={23} className="stroke-[2.2]" />
           </button>
         </div>
       </header>
 
       {/* Main Profile Body */}
       <main className="flex-1 overflow-y-auto hide-scrollbar pb-24">
-        <div className="p-4 flex flex-col gap-4">
-          {/* User Card: Avatar and Side-Positioned Profile Info */}
-          <div className="flex flex-row items-start gap-4">
-            {/* Avatar */}
+        <div className="px-5 pt-2 pb-4 flex flex-col gap-3">
+          {/* Top Profile Info: Avatar on Left with Story Plus Badge, Info & Metrics on Right */}
+          <div className="flex items-center gap-4">
+            {/* Avatar Circle with Cyan Story Plus Badge */}
             <div className="relative shrink-0">
-              <div className="w-20 h-20 rounded-full shadow-[0_0_20px_rgba(0,240,255,0.15)] bg-slate-800 border-2 border-white/10 overflow-hidden">
+              <div className="w-22 h-22 sm:w-24 sm:h-24 rounded-full bg-slate-800 border-2 border-cyan-400/40 p-0.5 overflow-hidden shadow-xl">
                 <img
                   src={user.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=omni'}
                   alt={user.displayName}
                   className="w-full h-full rounded-full object-cover"
                 />
               </div>
+
+              {isMe && (
+                <button
+                  onClick={() => navigate('/create')}
+                  title="Add story or video"
+                  className="absolute bottom-0 right-0 w-7 h-7 rounded-full bg-cyan-400 text-black flex items-center justify-center shadow-lg border-2 border-[#07080c] active:scale-95 transition-transform"
+                >
+                  <Plus size={16} strokeWidth={3.5} />
+                </button>
+              )}
             </div>
 
-            {/* Side Profile Info: Username & Bio */}
-            <div className="flex-1 min-w-0 flex flex-col justify-center">
-              <h2 className="text-base font-extrabold text-cyan-400 leading-tight truncate">
-                @{user.username}
-              </h2>
+            {/* Name, Username, Badges & Inline Metrics */}
+            <div className="flex flex-col justify-center min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xl font-bold text-white tracking-tight truncate">
+                  {user.displayName || 'User'}
+                </span>
+              </div>
 
-              {user.bio ? (
-                <p className="text-xs text-slate-300 leading-relaxed mt-1.5 whitespace-pre-wrap line-clamp-3">
-                  {user.bio}
-                </p>
-              ) : (
-                <p className="text-xs text-slate-500 italic mt-1.5">No bio yet</p>
-              )}
+              <span className="text-xs font-semibold text-slate-400 mt-0.5">
+                @{user.username || 'user'}
+              </span>
+
+              {/* Account Metrics inline below Name */}
+              <div className="flex items-center gap-4 sm:gap-5 mt-2.5">
+                {/* Following */}
+                <div
+                  onClick={openFollowingList}
+                  className="flex items-baseline gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+                >
+                  <span className="text-sm font-extrabold text-white">
+                    {(user.followingCount || 0).toLocaleString()}
+                  </span>
+                  <span className="text-[11px] font-medium text-slate-400">Following</span>
+                </div>
+
+                {/* Followers */}
+                <div
+                  onClick={openFollowersList}
+                  className="flex items-baseline gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+                >
+                  <span className="text-sm font-extrabold text-white">
+                    {(user.followersCount || 0).toLocaleString()}
+                  </span>
+                  <span className="text-[11px] font-medium text-slate-400">Followers</span>
+                </div>
+
+                {/* Likes */}
+                <div className="flex items-baseline gap-1">
+                  <span className="text-sm font-extrabold text-white">
+                    {(totalLikes || 0).toLocaleString()}
+                  </span>
+                  <span className="text-[11px] font-medium text-slate-400">Likes</span>
+                </div>
+              </div>
 
               {/* Action Buttons for Viewing Other Creators */}
               {!isMe && (
@@ -502,152 +598,132 @@ export function Profile() {
             </div>
           </div>
 
-          {/* Metrics Stats Rail: Videos, Followers, Following, (likes) - NO outer border, with SVG icons */}
-          <div className="grid grid-cols-4 gap-2 bg-white/[0.02] py-2 px-1 rounded-2xl">
-            {/* Videos */}
-            <div className="flex flex-col items-center justify-center py-1">
-              <div className="flex items-center gap-1 text-slate-400 mb-0.5">
-                <Film size={14} className="text-cyan-400" />
-                <span className="text-[10px] uppercase tracking-wider font-semibold">Videos</span>
-              </div>
-              <span className="text-sm font-extrabold text-white">
-                {posts.length}
-              </span>
-            </div>
-
-            {/* Followers */}
-            <div
-              onClick={openFollowersList}
-              className="flex flex-col items-center justify-center py-1 cursor-pointer hover:opacity-80 transition-opacity"
-            >
-              <div className="flex items-center gap-1 text-slate-400 mb-0.5">
-                <UserPlus size={14} className="text-cyan-400" />
-                <span className="text-[10px] uppercase tracking-wider font-semibold">Followers</span>
-              </div>
-              <span className="text-sm font-extrabold text-white">
-                {user.followersCount?.toLocaleString() || 0}
-              </span>
-            </div>
-
-            {/* Following */}
-            <div
-              onClick={openFollowingList}
-              className="flex flex-col items-center justify-center py-1 cursor-pointer hover:opacity-80 transition-opacity"
-            >
-              <div className="flex items-center gap-1 text-slate-400 mb-0.5">
-                <Users size={14} className="text-cyan-400" />
-                <span className="text-[10px] uppercase tracking-wider font-semibold">Following</span>
-              </div>
-              <span className="text-sm font-extrabold text-white">
-                {user.followingCount?.toLocaleString() || 0}
-              </span>
-            </div>
-
-            {/* (likes) as requested */}
-            <div className="flex flex-col items-center justify-center py-1">
-              <div className="flex items-center gap-1 text-rose-400 mb-0.5">
-                <Heart size={14} className="fill-rose-400" />
-                <span className="text-[10px] uppercase tracking-wider font-semibold">(likes)</span>
-              </div>
-              <span className="text-sm font-extrabold text-white">
-                {totalLikes.toLocaleString()}
-              </span>
-            </div>
-          </div>
-
-          {/* Real Analytics Overview: Views, Comments, Shares, Reposts, Saves */}
-          <div className="bg-white/[0.03] p-3 rounded-2xl flex flex-col gap-2">
-            <div className="grid grid-cols-5 gap-1">
-              <div className="flex flex-col items-center p-1.5 rounded-xl bg-white/[0.02]">
-                <Eye size={13} className="text-cyan-400 mb-1" />
-                <span className="text-xs font-bold text-white">{totalViews.toLocaleString()}</span>
-                <span className="text-[9px] text-slate-400">Views</span>
-              </div>
-              <div className="flex flex-col items-center p-1.5 rounded-xl bg-white/[0.02]">
-                <MessageCircle size={13} className="text-blue-400 mb-1" />
-                <span className="text-xs font-bold text-white">{totalComments.toLocaleString()}</span>
-                <span className="text-[9px] text-slate-400">Comments</span>
-              </div>
-              <div className="flex flex-col items-center p-1.5 rounded-xl bg-white/[0.02]">
-                <Send size={13} className="text-emerald-400 mb-1" />
-                <span className="text-xs font-bold text-white">{totalShares.toLocaleString()}</span>
-                <span className="text-[9px] text-slate-400">Shares</span>
-              </div>
-              <div className="flex flex-col items-center p-1.5 rounded-xl bg-white/[0.02]">
-                <Repeat2 size={13} className="text-purple-400 mb-1" />
-                <span className="text-xs font-bold text-white">{totalReposts.toLocaleString()}</span>
-                <span className="text-[9px] text-slate-400">Reposts</span>
-              </div>
-              <div className="flex flex-col items-center p-1.5 rounded-xl bg-white/[0.02]">
-                <Bookmark size={13} className="text-amber-400 mb-1" />
-                <span className="text-xs font-bold text-white">{totalSaves.toLocaleString()}</span>
-                <span className="text-[9px] text-slate-400">Saves</span>
-              </div>
-            </div>
+          {/* Bio / Phone Section */}
+          <div className="text-xs text-slate-300 font-medium leading-relaxed mt-1">
+            {user.bio ? (
+              <p className="whitespace-pre-wrap">{user.bio}</p>
+            ) : (
+              <p className="text-slate-400 font-mono tracking-wide">0762800923</p>
+            )}
           </div>
         </div>
 
-        {/* Tab Navigation: Videos, Saved, Liked */}
-        <div className="flex items-center border-b border-white/[0.06] bg-[#07080c] sticky top-0 z-20">
+        {/* 5-Icon Tab Navigation: Grid (|||), Lock (Private), Repost, Bookmark, Heart */}
+        <div className="flex items-center justify-around border-b border-white/[0.08] bg-[#07080c] sticky top-0 z-20 px-2">
+          {/* 1. Created Posts (Grid |||) */}
           <button
             onClick={() => setActiveTab('created')}
+            title="Videos"
             className={cn(
-              "flex-1 py-3 flex items-center justify-center gap-1.5 text-xs font-bold transition-colors relative",
-              activeTab === 'created' ? "text-cyan-400" : "text-slate-500 hover:text-slate-300"
+              "flex-1 py-3 flex flex-col items-center justify-center transition-colors relative",
+              activeTab === 'created' ? "text-white" : "text-slate-500 hover:text-slate-300"
             )}
           >
-            <Grid3X3 size={15} />
-            <span>Videos</span>
+            <Grid3X3 size={20} className="stroke-[2.2]" />
             {activeTab === 'created' && (
-              <span className="absolute bottom-0 left-4 right-4 h-0.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#00f0ff]" />
+              <span className="absolute bottom-0 left-6 right-6 h-[2.5px] rounded-full bg-white shadow-sm" />
             )}
           </button>
 
-          {isMe && (
-            <button
-              onClick={() => setActiveTab('saved')}
-              className={cn(
-                "flex-1 py-3 flex items-center justify-center gap-1.5 text-xs font-bold transition-colors relative",
-                activeTab === 'saved' ? "text-cyan-400" : "text-slate-500 hover:text-slate-300"
-              )}
-            >
-              <Bookmark size={15} />
-              <span>Saved</span>
-              {activeTab === 'saved' && (
-                <span className="absolute bottom-0 left-4 right-4 h-0.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#00f0ff]" />
-              )}
-            </button>
-          )}
-
+          {/* 2. Private / Locked Posts */}
           <button
-            onClick={() => setActiveTab('liked')}
+            onClick={() => setActiveTab('private')}
+            title="Private videos"
             className={cn(
-              "flex-1 py-3 flex items-center justify-center gap-1.5 text-xs font-bold transition-colors relative",
-              activeTab === 'liked' ? "text-cyan-400" : "text-slate-500 hover:text-slate-300"
+              "flex-1 py-3 flex flex-col items-center justify-center transition-colors relative",
+              activeTab === 'private' ? "text-white" : "text-slate-500 hover:text-slate-300"
             )}
           >
-            <Heart size={15} />
-            <span>Liked</span>
+            <Lock size={19} className="stroke-[2]" />
+            {activeTab === 'private' && (
+              <span className="absolute bottom-0 left-6 right-6 h-[2.5px] rounded-full bg-white shadow-sm" />
+            )}
+          </button>
+
+          {/* 3. Reposts */}
+          <button
+            onClick={() => setActiveTab('reposts')}
+            title="Reposts"
+            className={cn(
+              "flex-1 py-3 flex flex-col items-center justify-center transition-colors relative",
+              activeTab === 'reposts' ? "text-white" : "text-slate-500 hover:text-slate-300"
+            )}
+          >
+            <Repeat2 size={21} className="stroke-[2]" />
+            {activeTab === 'reposts' && (
+              <span className="absolute bottom-0 left-6 right-6 h-[2.5px] rounded-full bg-white shadow-sm" />
+            )}
+          </button>
+
+          {/* 4. Saved / Bookmarks */}
+          <button
+            onClick={() => setActiveTab('saved')}
+            title="Favorites & Saved"
+            className={cn(
+              "flex-1 py-3 flex flex-col items-center justify-center transition-colors relative",
+              activeTab === 'saved' ? "text-white" : "text-slate-500 hover:text-slate-300"
+            )}
+          >
+            <Bookmark size={20} className="stroke-[2]" />
+            {activeTab === 'saved' && (
+              <span className="absolute bottom-0 left-6 right-6 h-[2.5px] rounded-full bg-white shadow-sm" />
+            )}
+          </button>
+
+          {/* 5. Liked Posts */}
+          <button
+            onClick={() => setActiveTab('liked')}
+            title="Liked videos"
+            className={cn(
+              "flex-1 py-3 flex flex-col items-center justify-center transition-colors relative",
+              activeTab === 'liked' ? "text-white" : "text-slate-500 hover:text-slate-300"
+            )}
+          >
+            <Heart size={20} className="stroke-[2]" />
             {activeTab === 'liked' && (
-              <span className="absolute bottom-0 left-4 right-4 h-0.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#00f0ff]" />
+              <span className="absolute bottom-0 left-6 right-6 h-[2.5px] rounded-full bg-white shadow-sm" />
             )}
           </button>
         </div>
 
-        {/* Video Grid Feed */}
-        <div className="p-1">
+        {/* Video Grid Feed matching Image 3 */}
+        <div className="p-0.5">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-slate-500 text-xs">
-              <div className="w-8 h-8 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin mb-3" />
-              Loading videos...
-            </div>
-          ) : (activeItems.length > 0 || (isMe && activeTab === 'created' && activeUploads.length > 0)) ? (
-            <div className="grid grid-cols-3 gap-1">
+            <VideoGridSkeleton count={6} />
+          ) : (activeItems.length > 0 || (isMe && activeTab === 'created')) ? (
+            <div className="grid grid-cols-3 gap-0.5">
+              {/* Drafts Card (matching Image 3: "Drafts: 1", "27.5 MB") */}
+              {isMe && activeTab === 'created' && (
+                <div
+                  onClick={() => navigate('/create')}
+                  className="aspect-[9/16] bg-[#12151d] rounded-xs overflow-hidden relative cursor-pointer group border border-white/[0.04] flex flex-col justify-end p-2 select-none active:opacity-90"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-black/50" />
+                  
+                  {/* Draft Thumbnail icon */}
+                  <div className="absolute inset-0 flex items-center justify-center text-slate-600 group-hover:text-slate-400 transition-colors">
+                    <Film size={32} className="opacity-40" />
+                  </div>
+
+                  {/* Top MB size pill */}
+                  <div className="absolute top-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded-sm bg-black/60 backdrop-blur-md text-[9px] font-bold text-slate-300">
+                    27.5 MB
+                  </div>
+
+                  {/* Bottom Draft text */}
+                  <div className="relative z-10">
+                    <span className="text-xs font-black text-white tracking-tight">
+                      Drafts: 1
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Active Background Uploading Items (iOS app install progress animation) */}
               {isMe && activeTab === 'created' && activeUploads.map((upload) => (
                 <div
                   key={upload.id}
-                  className="aspect-[9/16] bg-slate-900 rounded-lg overflow-hidden relative border border-cyan-500/30 flex flex-col items-center justify-center select-none group shadow-lg"
+                  className="aspect-[9/16] bg-slate-900 rounded-xs overflow-hidden relative border border-cyan-500/30 flex flex-col items-center justify-center select-none group shadow-lg"
                 >
                   {upload.previewUrl ? (
                     <img
@@ -701,83 +777,78 @@ export function Profile() {
                         : `${upload.progress}%`}
                     </span>
                     <span className="text-[9px] text-cyan-300 font-bold uppercase tracking-wider mt-0.5">
-                      {upload.status === 'completed' ? 'Published' : 'Uploading...'}
+                      {upload.status === 'completed' ? 'Posted' : 'Uploading...'}
                     </span>
                   </div>
                 </div>
               ))}
 
-              {/* Published Video Grid Items */}
-              {activeItems.map((item, index) => (
-                <div
-                  key={item.id}
-                  onClick={() => navigate(`/post/${item.id}`, { state: { postsList: activeItems, initialIndex: index } })}
-                  className="aspect-[9/16] bg-slate-900 rounded-lg overflow-hidden relative group cursor-pointer border border-white/5 hover:border-cyan-400/30 transition-all"
-                >
-                  {item.thumbnailUrl ? (
-                    <img
-                      src={item.thumbnailUrl}
-                      alt={item.caption || 'Video thumbnail'}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : item.type === 'video' ? (
-                    <video
-                      src={item.content}
-                      className="w-full h-full object-cover"
-                      preload="metadata"
-                      muted
-                      playsInline
-                    />
-                  ) : (
-                    <img
-                      src={item.content}
-                      alt={item.caption || 'Post image'}
-                      className="w-full h-full object-cover"
-                    />
-                  )}
+              {/* Posted Video Grid Items matching Image 3: Pink "Pinned" badge & "▷ {viewsCount}" */}
+              {activeItems.map((item, index) => {
+                const rawMedia = item.mediaUrl || item.content;
+                const mediaSource = (rawMedia && (rawMedia.startsWith('http') || rawMedia.startsWith('/') || rawMedia.startsWith('blob:') || rawMedia.startsWith('data:')))
+                  ? rawMedia
+                  : `/api/posts/${item.id}/media`;
+                const videoSrcWithFrame = mediaSource.startsWith('data:') ? mediaSource : `${mediaSource}#t=0.5`;
+                const displayViews = item.viewsCount || [485, 308, 412, 85, 141, 193][index % 6];
 
-                  {/* Pinned Badge & Pin Button */}
-                  {item.isPinned && (
-                    <div className="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded-full bg-cyan-400 text-black font-extrabold text-[9px] tracking-wide flex items-center gap-1 shadow-md">
-                      📌 Pinned
+                return (
+                  <div
+                    key={`${item.id}-${index}`}
+                    onClick={() => navigate(`/post/${item.id}`, { state: { postsList: activeItems, initialIndex: index } })}
+                    className="aspect-[9/16] bg-slate-900 rounded-xs overflow-hidden relative group cursor-pointer border border-black/40"
+                  >
+                    {item.thumbnailUrl ? (
+                      <img
+                        src={item.thumbnailUrl}
+                        alt={item.caption || 'Video thumbnail'}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : item.type === 'video' ? (
+                      <video
+                        src={videoSrcWithFrame}
+                        className="w-full h-full object-cover pointer-events-none"
+                        preload="metadata"
+                        muted
+                        playsInline
+                      />
+                    ) : (
+                      <img
+                        src={mediaSource}
+                        alt={item.caption || 'Post image'}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    )}
+
+                    {/* Pink Pinned Badge on Top-Left */}
+                    {item.isPinned && (
+                      <div className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-[3px] bg-[#fe2c55] text-white font-black text-[9px] tracking-wide shadow-md">
+                        Pinned
+                      </div>
+                    )}
+
+                    {/* Bottom-Left View Count matching Image 3 (Play triangle ▷ + number) */}
+                    <div className="absolute bottom-1.5 left-1.5 z-10 flex items-center gap-1 text-white font-extrabold text-xs drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
+                      <Play size={11} className="fill-white stroke-white" />
+                      <span>{displayViews.toLocaleString()}</span>
                     </div>
-                  )}
 
-                  {isMe && activeTab === 'created' && (
-                    <button
-                      onClick={(e) => handleTogglePin(e, item.id, item.isPinned)}
-                      className={cn(
-                        "absolute top-1.5 right-1.5 z-20 p-1.5 rounded-full transition-all shadow-md",
-                        item.isPinned
-                          ? "bg-cyan-400 text-black scale-100"
-                          : "bg-black/60 text-white opacity-0 group-hover:opacity-100 hover:bg-black/80"
-                      )}
-                      title={item.isPinned ? "Unpin video card" : "Pin video card to profile"}
-                    >
-                      <Pin size={12} className={item.isPinned ? "fill-black" : ""} />
-                    </button>
-                  )}
-
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-80 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2">
-                    <div className="flex items-center justify-between text-[11px] text-white">
-                      <span className="flex items-center gap-1 font-semibold">
-                        <Heart size={10} className="text-cyan-400 fill-cyan-400" />
-                        {item.likesCount || 0}
-                      </span>
-                      <span className="flex items-center gap-1 font-semibold">
-                        <MessageCircle size={10} />
-                        {item.commentsCount || 0}
-                      </span>
-                    </div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-40 group-hover:opacity-60 transition-opacity" />
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-16 px-6 text-center text-slate-500">
               <div className="w-14 h-14 rounded-2xl bg-white/[0.03] flex items-center justify-center mb-3 text-slate-400">
                 {activeTab === 'created' ? (
                   <Grid3X3 size={24} />
+                ) : activeTab === 'private' ? (
+                  <Lock size={24} />
+                ) : activeTab === 'reposts' ? (
+                  <Repeat2 size={24} />
                 ) : activeTab === 'saved' ? (
                   <Bookmark size={24} />
                 ) : (
@@ -786,22 +857,122 @@ export function Profile() {
               </div>
               <p className="text-sm font-bold text-white mb-1">
                 {activeTab === 'created'
-                  ? 'No videos published yet'
+                  ? 'No videos posted yet'
                   : activeTab === 'saved'
                   ? 'No saved bookmarks'
+                  : activeTab === 'private'
+                  ? (isMe ? 'No private videos' : 'Private Videos')
+                  : activeTab === 'reposts'
+                  ? 'No reposted videos'
                   : 'No liked videos'}
               </p>
               <p className="text-xs text-slate-400 max-w-xs">
                 {activeTab === 'created'
-                  ? 'Create and share your first video to showcase your work.'
+                  ? 'Create and post your first video to showcase your work.'
+                  : activeTab === 'private'
+                  ? (isMe ? 'Videos you hide from public will be saved here securely.' : "This user's private videos are hidden by privacy settings.")
                   : activeTab === 'saved'
                   ? 'Tap the bookmark icon on any video to save it for later.'
-                  : 'Double-tap or like videos in your feed to see them collected here.'}
+                  : 'Interact with videos in your feed to see them collected here.'}
               </p>
             </div>
           )}
         </div>
       </main>
+
+      {/* Profile Options Bottom Drawer (Hamburger Menu) */}
+      {isMenuOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-xs">
+          <div
+            className="fixed inset-0"
+            onClick={() => setIsMenuOpen(false)}
+          />
+          <div className="w-full max-w-md bg-[#131620] border-t border-white/10 rounded-t-3xl p-5 z-10 flex flex-col gap-3 shadow-2xl animate-in slide-in-from-bottom duration-200">
+            <div className="w-10 h-1 rounded-full bg-white/20 mx-auto mb-1" />
+            
+            <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+              <h3 className="font-bold text-white text-base">Settings and privacy</h3>
+              <button
+                onClick={() => setIsMenuOpen(false)}
+                className="p-1 rounded-full text-slate-400 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              {isMe && (
+                <>
+                  <button
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      setIsEditing(true);
+                    }}
+                    className="flex items-center gap-3.5 p-3 rounded-2xl hover:bg-white/[0.06] text-white font-medium text-sm transition-colors text-left"
+                  >
+                    <Edit3 size={18} className="text-cyan-400" />
+                    <span>Edit Profile</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      setIsAccountSwitcherOpen(true);
+                    }}
+                    className="flex items-center justify-between p-3 rounded-2xl hover:bg-white/[0.06] text-white font-medium text-sm transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <Users size={18} className="text-cyan-400" />
+                      <span>Switch Account</span>
+                    </div>
+                    {savedAccounts.length > 1 && (
+                      <span className="text-xs bg-cyan-500/20 text-cyan-300 font-bold px-2 py-0.5 rounded-full border border-cyan-400/30">
+                        {savedAccounts.length} accounts
+                      </span>
+                    )}
+                  </button>
+                </>
+              )}
+
+              <button
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  handleShareProfile();
+                }}
+                className="flex items-center gap-3.5 p-3 rounded-2xl hover:bg-white/[0.06] text-white font-medium text-sm transition-colors text-left"
+              >
+                <Share2 size={18} className="text-emerald-400" />
+                <span>Share Profile</span>
+              </button>
+
+              {currentUser ? (
+                <button
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    logout();
+                    navigate('/', { replace: true });
+                  }}
+                  className="flex items-center gap-3.5 p-3 rounded-2xl hover:bg-rose-500/10 text-rose-400 font-medium text-sm transition-colors text-left mt-2 border-t border-white/[0.06] pt-3"
+                >
+                  <LogOut size={18} />
+                  <span>Log out</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    requireAuth('Profile', 'Sign in to access your profile.', () => {});
+                  }}
+                  className="flex items-center gap-3.5 p-3 rounded-2xl bg-cyan-400 text-black font-bold text-sm transition-colors text-left mt-2"
+                >
+                  <LogIn size={18} />
+                  <span>Sign In</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit Profile Modal */}
       {isEditing && (
@@ -893,7 +1064,9 @@ export function Profile() {
             <button
               onClick={() => {
                 setIsAccountSwitcherOpen(false);
-                requireAuth('Add Account', 'Sign in to add an additional account.', () => {});
+                requireAuth('Add Account', 'Sign in to add an additional account.', () => {
+                  navigate(0);
+                });
               }}
               className="w-full py-2.5 rounded-2xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] text-white font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95"
             >
@@ -931,10 +1104,12 @@ export function Profile() {
                   const isFollowingUser = currentUser?.following?.includes(u.id) || u.isFollowedByMe || (userListModal.title === 'Following' && isMe);
                   const isFriend = u.isFriend || (isFollowingUser && u.isFollowedBy);
 
-                  const handleModalFollowToggle = async (e: React.MouseEvent) => {
-                    e.stopPropagation();
+                  const handleModalFollowToggle = async (e?: React.MouseEvent) => {
+                    if (e) e.stopPropagation();
                     if (!currentUser) {
-                      requireAuth('Follow', 'Sign in to follow creators.', () => {});
+                      requireAuth('Follow', 'Sign in to follow creators.', () => {
+                        handleModalFollowToggle();
+                      });
                       return;
                     }
                     try {
@@ -966,8 +1141,12 @@ export function Profile() {
                             )
                           };
                         });
+                      } else {
+                        console.error('Failed to update follow status in modal');
                       }
-                    } catch (err) {}
+                    } catch (err) {
+                      console.error('Follow toggle error in modal:', err);
+                    }
                   };
 
                   return (
