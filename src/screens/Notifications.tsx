@@ -1,166 +1,60 @@
-import React, { useState, useEffect } from 'react';
-import { Heart, UserPlus, MessageCircle, Repeat2, Share2, Bell } from 'lucide-react';
+import React from 'react';
+import { Bell, Heart, MessageCircle, Repeat2, Share2, UserPlus } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
-import { cn } from '../lib/utils';
 import { auth } from '../lib/firebase';
 import { useAppContext } from '../context/AppContext';
+import { ScreenState } from '../components/ui/ScreenState';
+
+interface ActivityItem { id: string | number; type: string; targetId?: string; message?: string; isRead?: boolean; createdAt?: string; actor?: { id?: string; displayName?: string; username?: string; avatar?: string } }
+
+const iconFor = (type: string) => ({ LIKE: Heart, FOLLOW: UserPlus, COMMENT: MessageCircle, MESSAGE: MessageCircle, REPOST: Repeat2, SHARE: Share2 }[type] || Bell);
+const copyFor = (item: ActivityItem) => item.message || ({ LIKE: 'liked your post', FOLLOW: 'started following you', COMMENT: 'commented on your post', MESSAGE: 'sent you a message', REPOST: 'reposted your post', SHARE: 'shared your post' }[item.type] || 'interacted with your profile');
 
 export function Notifications({ hideHeader }: { hideHeader?: boolean } = {}) {
-  const [notifications, setNotifications] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = React.useState<ActivityItem[]>([]);
+  const [state, setState] = React.useState<'loading' | 'ready' | 'error'>('loading');
   const { currentUser, refreshUnreadCount } = useAppContext();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!currentUser) {
-      setLoading(false);
-      return;
+  const load = React.useCallback(async () => {
+    if (!currentUser || !auth.currentUser) { setItems([]); setState('ready'); return; }
+    setState('loading');
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const response = await fetch('/api/notifications', { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new Error(`Activity request failed (${response.status})`);
+      const payload = await response.json();
+      setItems((Array.isArray(payload) ? payload : []).map((value: any) => value?.notification ? { ...value.notification, actor: value.actor || value.notification.actor } : value).filter(Boolean));
+      setState('ready');
+      const readResponse = await fetch('/api/notifications/read', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      if (readResponse.ok) refreshUnreadCount();
+    } catch (error) {
+      console.error('Failed to load activity:', error);
+      setState('error');
     }
-
-    const fetchNotifs = async () => {
-      try {
-        const token = await auth.currentUser?.getIdToken();
-        const res = await fetch('/api/notifications', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setNotifications(Array.isArray(data) ? data : []);
-          // Mark read
-          await fetch('/api/notifications/read', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          refreshUnreadCount();
-        }
-      } catch (err) {
-        console.error('Failed to load notifications:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchNotifs();
   }, [currentUser]);
 
-  const getIcon = (type: string) => {
-    switch (type) {
-      case 'LIKE':
-        return <Heart size={13} className="text-cyan-400 fill-cyan-400" />;
-      case 'FOLLOW':
-        return <UserPlus size={13} className="text-indigo-400" />;
-      case 'COMMENT':
-        return <MessageCircle size={13} className="text-emerald-400 fill-emerald-400" />;
-      case 'MESSAGE':
-        return <MessageCircle size={13} className="text-cyan-400 fill-cyan-400" />;
-      case 'REPOST':
-        return <Repeat2 size={13} className="text-emerald-400" />;
-      case 'SHARE':
-        return <Share2 size={13} className="text-amber-400" />;
-      default:
-        return <Bell size={13} className="text-cyan-400" />;
-    }
+  React.useEffect(() => { void load(); }, [load]);
+
+  const openItem = (item: ActivityItem) => {
+    if (item.type === 'MESSAGE' && item.actor?.id) navigate(`/messages?user=${encodeURIComponent(item.actor.id)}`);
+    else if (item.targetId) navigate(`/post/${item.targetId}`);
+    else if (item.actor?.id) navigate(`/profile/${item.actor.id}`);
   };
 
-  const getActionDescription = (type: string) => {
-    switch (type) {
-      case 'LIKE': return 'liked your post.';
-      case 'FOLLOW': return 'started following you.';
-      case 'COMMENT': return 'commented on your video.';
-      case 'MESSAGE': return 'sent you a message.';
-      case 'REPOST': return 'reposted your video.';
-      case 'SHARE': return 'shared your video.';
-      default: return 'interacted with your profile.';
-    }
-  };
-
-  return (
-    <div className="flex flex-col h-full bg-[#07080c]">
-      {!hideHeader && (
-        <header className="px-4 py-3.5 border-b  flex items-center justify-between bg-[#07080c]/90 ">
-          <h2 className="text-lg font-bold text-white">Activity</h2>
-        </header>
-      )}
-
-      <main className="flex-1 overflow-y-auto hide-scrollbar pb-24 p-3">
-        {loading ? (
-          <div className="flex flex-col gap-3 p-2">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="flex items-center gap-3 p-2 rounded-xl animate-pulse">
-                <div className="w-10 h-10 rounded-full bg-white/[0.05]" />
-                <div className="flex-1 space-y-2">
-                  <div className="w-32 h-3.5 rounded bg-white/[0.05]" />
-                  <div className="w-20 h-3 rounded bg-white/[0.03]" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : notifications.length > 0 ? (
-          notifications.map((item: any, idx: number) => {
-            const notif = item?.notification || item;
-            if (!notif) return null;
-            const actor = notif.actor || item?.actor;
-            const isRead = notif.isRead ?? false;
-            const targetPostId = notif.targetId || notif.postId;
-            const notifId = notif.id ?? item?.id ?? idx;
-            const notifType = notif.type || 'SYSTEM';
-
-            return (
-              <div
-                key={notifId}
-                onClick={() => {
-                  if (notifType === 'MESSAGE' && actor?.id) {
-                    navigate(`/messages?user=${actor.id}&name=${encodeURIComponent(actor.displayName || '')}&username=${encodeURIComponent(actor.username || '')}&avatar=${encodeURIComponent(actor.avatar || '')}`);
-                  } else if (targetPostId) {
-                    navigate(`/post/${targetPostId}`);
-                  } else if (actor?.id) {
-                    navigate(`/profile/${actor.id}`);
-                  }
-                }}
-                className={cn(
-                  "flex items-start gap-3.5 p-3 rounded-2xl mb-1.5 transition-colors cursor-pointer",
-                  !isRead
-                    ? "bg-cyan-500/[0.08] hover:bg-cyan-500/[0.12]"
-                    : "bg-white/[0.02] hover:bg-white/[0.05]"
-                )}
-              >
-                <div className="relative pt-0.5 shrink-0">
-                  <img
-                    src={actor?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=user'}
-                    alt={actor?.displayName || 'User'}
-                    className="w-10 h-10 rounded-full object-cover bg-slate-800 "
-                  />
-                  <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[#0f1118]  flex items-center justify-center">
-                    {getIcon(notifType)}
-                  </div>
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-slate-200 leading-relaxed">
-                    <span className="font-bold text-white">
-                      {actor?.displayName || 'Someone'}{' '}
-                    </span>
-                    {getActionDescription(notifType)}
-                  </p>
-                  <span className="text-[10px] text-slate-500 block mt-0.5">
-                    {notif.createdAt ? formatDistanceToNow(new Date(notif.createdAt), { addSuffix: true }) : 'just now'}
-                  </span>
-                </div>
-              </div>
-            );
-          })
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center px-6 py-12">
-            <div className="w-16 h-16 rounded-2xl bg-cyan-500/10  flex items-center justify-center text-cyan-400 mb-3 shadow-[0_0_20px_rgba(0,240,255,0.15)]">
-              <Bell size={32} />
-            </div>
-            <h3 className="text-base font-bold text-white mb-1">No notifications yet</h3>
-            <p className="text-xs text-slate-400 max-w-xs">
-              When others like your videos, leave comments, or follow you, you'll see it here.
-            </p>
-          </div>
-        )}
-      </main>
-    </div>
-  );
+  return <div className="flex h-full flex-col bg-omni-bg">
+    {!hideHeader && <header className="border-b border-[var(--omni-border-subtle)] px-4 py-4"><h1 className="text-xl font-semibold">Activity</h1></header>}
+    <main className="flex-1 overflow-y-auto pb-24">
+      {state === 'loading' && <ScreenState kind="loading" title="Loading activity" description="Getting the latest moments from your community."/>}
+      {state === 'error' && <ScreenState kind="error" title="Activity could not load" description="Check your connection and try again." actionLabel="Try again" onAction={load}/>} 
+      {state === 'ready' && items.length === 0 && <ScreenState kind="empty" title="Nothing new yet" description="Follows, replies and reactions will appear here."/>}
+      {state === 'ready' && items.length > 0 && <section aria-label="Recent activity"><h2 className="px-4 pb-2 pt-5 text-xs font-semibold uppercase tracking-wider text-[var(--omni-text-muted)]">New and recent</h2>{items.map((item, index) => {
+        const Icon = iconFor(item.type); const actorName = item.actor?.displayName || item.actor?.username || 'Someone';
+        return <button key={item.id ?? index} onClick={() => openItem(item)} className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.045]">
+          <span className="relative grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--omni-bg-elevated)]">{item.actor?.avatar ? <img src={item.actor.avatar} alt="" className="h-full w-full object-cover"/> : <span className="text-sm font-bold text-omni-accent">{actorName.slice(0,1).toUpperCase()}</span>}<span className="absolute bottom-0 right-0 grid h-5 w-5 place-items-center rounded-full border-2 border-[var(--omni-bg-base)] bg-omni-accent text-[#0b0b0a]"><Icon size={10}/></span></span>
+          <span className="min-w-0 flex-1"><span className="text-sm leading-5"><b>{actorName}</b> <span className="text-[var(--omni-text-secondary)]">{copyFor(item)}</span></span><span className="mt-1 block text-xs text-[var(--omni-text-muted)]">{item.createdAt ? formatDistanceToNow(new Date(item.createdAt), { addSuffix: true }) : 'Just now'}</span></span>{!item.isRead && <span className="h-2 w-2 shrink-0 rounded-full bg-omni-accent"/>}</button>;
+      })}</section>}
+    </main>
+  </div>;
 }
