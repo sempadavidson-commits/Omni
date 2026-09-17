@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "users": {
+      "path": "users/{userId}",
+      "description": "User profiles",
+      "fields": {
+        "uid": { "type": "string", "description": "User unique identifier" },
+        "email": { "type": "string", "description": "User email address" },
+        "phoneNumber": { "type": "string", "description": "User phone number" },
+        "username": { "type": "string", "description": "Unique username handle" },
+        "displayName": { "type": "string", "description": "Display name" },
+        "avatar": { "type": "string", "description": "Avatar image URL" },
+        "bio": { "type": "string", "description": "User bio text" },
+        "followersCount": { "type": "number", "description": "Follower count" },
+        "followingCount": { "type": "number", "description": "Following count" },
+        "createdAt": { "type": "string", "description": "Creation ISO date" }
+      },
+      "access": {
+        "read": "true",
+        "create": "request.auth != null && request.auth.uid == userId",
+        "update": "request.auth != null && request.auth.uid == userId",
+        "delete": "request.auth != null && request.auth.uid == userId"
+      }
+    },
+    "posts": {
+      "path": "posts/{postId}",
+      "description": "Social media posts",
+      "fields": {
+        "authorId": { "type": "string", "description": "Author user ID" },
+        "type": { "type": "string", "description": "Media type (text, image, video)" },
+        "content": { "type": "string", "description": "Post text or media URL" },
+        "mediaUrl": { "type": "string", "description": "Media asset URL" },
+        "caption": { "type": "string", "description": "Post caption" },
+        "likesCount": { "type": "number", "description": "Likes counter" },
+        "commentsCount": { "type": "number", "description": "Comments counter" },
+        "sharesCount": { "type": "number", "description": "Shares counter" },
+        "viewsCount": { "type": "number", "description": "Views counter" },
+        "createdAt": { "type": "string", "description": "Creation ISO date" }
+      },
+      "access": {
+        "read": "true",
+        "create": "request.auth != null",
+        "update": "request.auth != null",
+        "delete": "request.auth != null && request.auth.uid == resource.data.authorId"
+      }
+    },
+    "likes": {
+      "path": "posts/{postId}/likes/{likeId}",
+      "description": "Likes on posts",
+      "fields": {
+        "userId": { "type": "string", "description": "User ID who liked" },
+        "createdAt": { "type": "string", "description": "ISO date" }
+      },
+      "access": {
+        "read": "true",
+        "create": "request.auth != null",
+        "delete": "request.auth != null && (request.auth.uid == resource.data.userId || request.auth.uid == likeId)"
+      }
+    },
+    "comments": {
+      "path": "posts/{postId}/comments/{commentId}",
+      "description": "Comments on posts",
+      "fields": {
+        "authorId": { "type": "string", "description": "Comment author user ID" },
+        "text": { "type": "string", "description": "Comment content" },
+        "createdAt": { "type": "string", "description": "ISO date" }
+      },
+      "access": {
+        "read": "true",
+        "create": "request.auth != null",
+        "update": "request.auth != null && request.auth.uid == resource.data.authorId",
+        "delete": "request.auth != null && request.auth.uid == resource.data.authorId"
+      }
+    }
+  }
+}

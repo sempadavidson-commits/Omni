@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { X, Mail, ArrowLeft, Loader2, Lock, User, Eye, EyeOff } from 'lucide-react';
+import { X, Mail, ArrowLeft, Loader2, Lock, User, Eye, EyeOff, Phone, KeyRound } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { auth, googleAuthProvider } from '../lib/firebase';
 import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  updateProfile
+  updateProfile,
+  signInWithPhoneNumber,
+  RecaptchaVerifier,
+  ConfirmationResult
 } from 'firebase/auth';
 import { motion, AnimatePresence } from 'motion/react';
 
-type AuthViewMode = 'select' | 'signin' | 'signup';
+type AuthViewMode = 'select' | 'signin' | 'signup' | 'phone';
 
 export function AuthModal() {
   const { isAuthModalOpen, authAction, closeAuthModal, login } = useAppContext();
@@ -18,6 +21,9 @@ export function AuthModal() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +34,9 @@ export function AuthModal() {
       setEmail('');
       setPassword('');
       setDisplayName('');
+      setPhoneNumber('');
+      setOtpCode('');
+      setConfirmationResult(null);
       setShowPassword(false);
       setIsSubmitting(false);
       setError(null);
@@ -165,8 +174,63 @@ export function AuthModal() {
     }
   };
 
+  const handleSendPhoneOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const formatted = phoneNumber.trim();
+    if (!formatted) {
+      setError('Please enter a valid phone number with country code (e.g. +15551234567).');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      if (!(window as any).recaptchaVerifier) {
+        (window as any).recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+          size: 'invisible',
+          callback: () => {}
+        });
+      }
+      const appVerifier = (window as any).recaptchaVerifier;
+      const confirmation = await signInWithPhoneNumber(auth, formatted, appVerifier);
+      setConfirmationResult(confirmation);
+      setIsSubmitting(false);
+    } catch (err: any) {
+      console.error('Phone auth error:', err);
+      if ((window as any).recaptchaVerifier) {
+        try { (window as any).recaptchaVerifier.clear(); } catch {}
+        (window as any).recaptchaVerifier = null;
+      }
+      setError(err.message || 'Failed to send SMS OTP. Verify Phone Auth is enabled in Firebase Console.');
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleVerifyPhoneOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpCode.trim() || !confirmationResult) {
+      setError('Please enter the 6-digit verification code sent to your phone.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      const cred = await confirmationResult.confirm(otpCode.trim());
+      await syncBackendUser(cred.user, phoneNumber.trim());
+      closeAuthModal();
+    } catch (err: any) {
+      console.error('Verify OTP error:', err);
+      setError(err.message || 'Invalid verification code. Please check and try again.');
+      setIsSubmitting(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85  animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 animate-in fade-in duration-200">
+      <div id="recaptcha-container"></div>
       <motion.div
         layout
         className="bg-[#0e1017] w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col p-6 relative"
@@ -178,6 +242,7 @@ export function AuthModal() {
               onClick={() => {
                 setMode('select');
                 setError(null);
+                setConfirmationResult(null);
               }}
               className="p-2 -ml-2 text-slate-400 hover:text-white rounded-full hover:bg-white/[0.05] transition-colors"
             >
@@ -193,7 +258,9 @@ export function AuthModal() {
                 ? authAction?.actionName || 'NEXUS AUTH'
                 : mode === 'signin'
                 ? 'Welcome Back'
-                : 'Create Account'}
+                : mode === 'signup'
+                ? 'Create Account'
+                : 'Phone Sign-In'}
             </h2>
             <p className="text-[11px] text-slate-400 mt-0.5">
               {authAction?.message || 'Sign in to access your creator profile and feed.'}
@@ -259,7 +326,17 @@ export function AuthModal() {
                 )}
               </button>
 
-              <div className="flex items-center my-1">
+              {/* Phone Auth Option */}
+              <button
+                type="button"
+                onClick={() => setMode('phone')}
+                className="w-full flex items-center justify-center gap-2.5 py-3 px-4 rounded-2xl bg-emerald-500/10 text-emerald-300 font-semibold text-xs hover:bg-emerald-500/20 active:scale-[0.98] transition-all"
+              >
+                <Phone size={15} />
+                <span>Sign In with Phone Number</span>
+              </button>
+
+              <div className="flex items-center my-0.5">
                 <div className="flex-1 h-[1px] bg-white/[0.08]" />
                 <span className="px-3 text-[11px] font-medium text-slate-500 uppercase tracking-wider">or</span>
                 <div className="flex-1 h-[1px] bg-white/[0.08]" />
@@ -286,6 +363,82 @@ export function AuthModal() {
               </button>
             </motion.div>
           )}
+
+          {mode === 'phone' && (
+            <motion.div
+              key="phone"
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              className="flex flex-col gap-3 py-1"
+            >
+              {!confirmationResult ? (
+                <form onSubmit={handleSendPhoneOtp} className="flex flex-col gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-400 ml-1">Phone Number (with Country Code)</label>
+                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-white/[0.04] focus-within:bg-white/[0.08] transition-colors">
+                      <Phone size={15} className="text-emerald-400 shrink-0" />
+                      <input
+                        type="tel"
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        placeholder="+1 555 123 4567"
+                        autoFocus
+                        required
+                        className="w-full bg-transparent text-sm text-white placeholder-slate-500 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="w-full mt-2 py-3.5 rounded-2xl bg-emerald-400 text-black font-extrabold text-xs hover:bg-emerald-300 active:scale-[0.98] transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isSubmitting ? <Loader2 size={16} className="animate-spin text-black" /> : 'Send Verification Code'}
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleVerifyPhoneOtp} className="flex flex-col gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-400 ml-1">SMS Verification Code</label>
+                    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-white/[0.04] focus-within:bg-white/[0.08] transition-colors">
+                      <KeyRound size={15} className="text-emerald-400 shrink-0" />
+                      <input
+                        type="text"
+                        value={otpCode}
+                        onChange={(e) => setOtpCode(e.target.value)}
+                        placeholder="6-digit SMS code"
+                        autoFocus
+                        required
+                        className="w-full bg-transparent text-sm text-white placeholder-slate-500 outline-none tracking-widest font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="w-full mt-2 py-3.5 rounded-2xl bg-emerald-400 text-black font-extrabold text-xs hover:bg-emerald-300 active:scale-[0.98] transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isSubmitting ? <Loader2 size={16} className="animate-spin text-black" /> : 'Verify Code & Sign In'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmationResult(null);
+                      setOtpCode('');
+                    }}
+                    className="text-xs text-slate-400 hover:text-white text-center mt-1"
+                  >
+                    Change Phone Number
+                  </button>
+                </form>
+              )}
+            </motion.div>
+          )}
+
 
           {mode === 'signin' && (
             <motion.form

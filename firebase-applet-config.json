@@ -1,11 +1,12 @@
 {
-  "projectId": "verdant-reality-6lsxp",
-  "appId": "1:44309809268:web:3623916b692d138dbde921",
-  "apiKey": "AIzaSyAtwlCzNwANqeGRxkSTXHGdlTWaGI1ZFRE",
-  "authDomain": "verdant-reality-6lsxp.firebaseapp.com",
-  "storageBucket": "verdant-reality-6lsxp.firebasestorage.app",
-  "messagingSenderId": "44309809268",
+  "projectId": "omni-e7851",
+  "appId": "1:353670009553:web:8c9a15a450be87bc27abf0",
+  "apiKey": "AIzaSyBysIL34FlgrHX0CRTqyd4mmRBROLSLG8w",
+  "authDomain": "omni-e7851.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-omnisocial-f664000a-cf4e-4094-8a67-56707eae8bff",
+  "storageBucket": "omni-e7851.firebasestorage.app",
+  "messagingSenderId": "353670009553",
   "measurementId": "",
-  "oAuthClientId": "44309809268-vj9h5p2mf6nk4kgo4gg3u4k8cgpa5nvs.apps.googleusercontent.com",
+  "oAuthClientId": "353670009553-3209tcnud83no4aphnq465h02tatjjpp.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }
