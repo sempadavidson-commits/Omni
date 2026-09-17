@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import { AppProvider } from './context/AppContext';
 import { BottomNav } from './components/BottomNav';
 import { AuthModal } from './components/AuthModal';
@@ -59,6 +60,7 @@ export default function App() {
         ) : (
           <Layout />
         )}
+        <Analytics />
       </AppProvider>
     </BrowserRouter>
   );
