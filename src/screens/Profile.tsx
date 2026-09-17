@@ -38,6 +38,8 @@ import { auth } from '../lib/firebase';
 import { Post, User } from '../types';
 import { cn } from '../lib/utils';
 import { ProfileSkeleton, VideoGridSkeleton } from '../components/OmniSkeleton';
+import { getApiUrl } from '../lib/api';
+import { getFirestoreUser, getFirestoreUserPosts } from '../services/firestoreService';
 
 export function Profile() {
   const { id } = useParams();
@@ -104,8 +106,11 @@ export function Profile() {
     if (isMe && currentUser) {
       setViewUser(currentUser);
     } else {
-      fetch(`/api/user/${targetId}`)
-        .then((res) => res.json())
+      fetch(getApiUrl(`/api/user/${targetId}`))
+        .then((res) => {
+          if (!res.ok) throw new Error('API user not found');
+          return res.json();
+        })
         .then((data) => {
           if (!data.error) {
             setViewUser({
@@ -114,9 +119,16 @@ export function Profile() {
               followersCount: data.followersCount || 0,
               followingCount: data.followingCount || 0,
             });
+          } else {
+            throw new Error(data.error);
           }
         })
-        .catch(console.error);
+        .catch(() => {
+          // Fallback to Firestore for Vercel deployment
+          getFirestoreUser(targetId).then((fsUser) => {
+            if (fsUser) setViewUser(fsUser);
+          }).catch(console.error);
+        });
     }
   }, [targetId, isMe, currentUser, id]);
 
@@ -162,25 +174,56 @@ export function Profile() {
     setLoading(true);
 
     if (activeTab === 'created') {
-      fetch(`/api/user/posts/${user.id}`)
-        .then((res) => res.json())
-        .then((data) => {
-          setPosts(Array.isArray(data) ? data : []);
-          setLoading(false);
+      fetch(getApiUrl(`/api/user/posts/${user.id}`))
+        .then((res) => {
+          if (!res.ok) throw new Error('API posts failed');
+          return res.json();
         })
-        .catch(() => setLoading(false));
-    } else if (activeTab === 'private') {
-      if (isMe) {
-        auth.currentUser?.getIdToken().then((token) => {
-          fetch(`/api/user/private/${user.id}`, {
-            headers: { Authorization: `Bearer ${token}` }
-          })
-            .then((res) => res.json())
-            .then((data) => {
-              setPrivatePosts(Array.isArray(data) ? data : []);
+        .then((data) => {
+          const arr = Array.isArray(data) ? data : [];
+          if (arr.length > 0) {
+            setPosts(arr);
+            setLoading(false);
+          } else {
+            throw new Error('Empty');
+          }
+        })
+        .catch(() => {
+          // Fallback to Firestore for Vercel deployment
+          getFirestoreUserPosts(user.id, 'created', currentUser?.id)
+            .then((fsPosts) => {
+              setPosts(fsPosts);
               setLoading(false);
             })
             .catch(() => setLoading(false));
+        });
+    } else if (activeTab === 'private') {
+      if (isMe) {
+        auth.currentUser?.getIdToken().then((token) => {
+          fetch(getApiUrl(`/api/user/private/${user.id}`), {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+            .then((res) => {
+              if (!res.ok) throw new Error('API private posts failed');
+              return res.json();
+            })
+            .then((data) => {
+              const arr = Array.isArray(data) ? data : [];
+              if (arr.length > 0) {
+                setPrivatePosts(arr);
+                setLoading(false);
+              } else {
+                throw new Error('Empty');
+              }
+            })
+            .catch(() => {
+              getFirestoreUserPosts(user.id, 'private', currentUser?.id)
+                .then((fsPosts) => {
+                  setPrivatePosts(fsPosts);
+                  setLoading(false);
+                })
+                .catch(() => setLoading(false));
+            });
         }).catch(() => setLoading(false));
       } else {
         setPrivatePosts([]);

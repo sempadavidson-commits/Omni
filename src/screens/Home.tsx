@@ -8,6 +8,8 @@ import { auth } from '../lib/firebase';
 import { useAppContext } from '../context/AppContext';
 import { globalSyncEngine } from '../sync/sync_engine';
 import { cn } from '../lib/utils';
+import { getApiUrl } from '../lib/api';
+import { getFirestoreFeed } from '../services/firestoreService';
 
 export function Home() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -57,39 +59,65 @@ export function Home() {
             }
           }
           
-          const res = await fetch(`/api/feed?tab=${tab}&page=${pageToFetch}&limit=10`, { headers });
+          const res = await fetch(getApiUrl(`/api/feed?tab=${tab}&page=${pageToFetch}&limit=10`), { headers });
           if (res.ok) {
             const contentType = res.headers.get('content-type') || '';
             if (contentType.includes('application/json')) {
               const data = await res.json();
               const incoming: Post[] = Array.isArray(data) ? data : [];
+              if (incoming.length > 0) {
+                if (isAppend) {
+                  setPosts(prev => {
+                    const existingIds = new Set(prev.map(p => p.id));
+                    const newUnique = incoming.filter(p => p.id && !existingIds.has(p.id));
+                    return [...prev, ...newUnique];
+                  });
+                } else {
+                  const seen = new Set<string>();
+                  const uniqueIncoming = incoming.filter(p => {
+                    if (!p.id || seen.has(p.id)) return false;
+                    seen.add(p.id);
+                    return true;
+                  });
+                  setPosts(uniqueIncoming);
+                }
+                setHasMore(incoming.length >= 10);
+                setPage(pageToFetch);
+                break; // Exit retry loop on success
+              }
+            }
+          }
+
+          // Fallback to Firestore feed (e.g. for Vercel deployment)
+          try {
+            const fsPosts = await getFirestoreFeed(tab, auth.currentUser?.uid, 20);
+            if (fsPosts && fsPosts.length > 0) {
               if (isAppend) {
                 setPosts(prev => {
                   const existingIds = new Set(prev.map(p => p.id));
-                  const newUnique = incoming.filter(p => p.id && !existingIds.has(p.id));
+                  const newUnique = fsPosts.filter(p => p.id && !existingIds.has(p.id));
                   return [...prev, ...newUnique];
                 });
               } else {
-                const seen = new Set<string>();
-                const uniqueIncoming = incoming.filter(p => {
-                  if (!p.id || seen.has(p.id)) return false;
-                  seen.add(p.id);
-                  return true;
-                });
-                setPosts(uniqueIncoming);
+                setPosts(fsPosts);
               }
-              setHasMore(incoming.length >= 10);
-              setPage(pageToFetch);
-            } else {
-              if (!isAppend) setPosts([]);
               setHasMore(false);
+              break;
             }
-            break; // Exit retry loop on success
+          } catch (fsErr) {
+            console.warn('Firestore feed fallback note:', fsErr);
           }
         } catch (err) {
           retries--;
           if (retries === 0) {
             console.warn('Could not fetch feed after retries:', err);
+            // Final attempt to load Firestore feed
+            try {
+              const fsPosts = await getFirestoreFeed(tab, auth.currentUser?.uid, 20);
+              if (fsPosts && fsPosts.length > 0 && !isAppend) {
+                setPosts(fsPosts);
+              }
+            } catch {}
           } else {
             await new Promise(r => setTimeout(r, 400));
           }

@@ -13,6 +13,8 @@ import {
   ConfirmationResult
 } from 'firebase/auth';
 import { motion, AnimatePresence } from 'motion/react';
+import { syncUserWithFirestore } from '../services/firestoreService';
+import { getApiUrl } from '../lib/api';
 
 type AuthViewMode = 'select' | 'signin' | 'signup' | 'phone';
 
@@ -49,7 +51,7 @@ export function AuthModal() {
   const syncBackendUser = async (firebaseUser: any, customDisplayName?: string) => {
     try {
       const idToken = await firebaseUser.getIdToken();
-      const res = await fetch('/api/register', {
+      const res = await fetch(getApiUrl('/api/register'), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${idToken}`,
@@ -63,7 +65,7 @@ export function AuthModal() {
       if (res.ok) {
         const data = await res.json();
         if (data.dbUser) {
-          login({
+          const syncedUser = {
             id: data.dbUser.uid,
             uid: data.dbUser.uid,
             username: data.dbUser.username,
@@ -72,12 +74,25 @@ export function AuthModal() {
             bio: data.dbUser.bio,
             followersCount: data.dbUser.followersCount,
             followingCount: data.dbUser.followingCount,
-          });
+          };
+          login(syncedUser);
+          syncUserWithFirestore(firebaseUser, syncedUser).catch(() => {});
           return;
         }
       }
     } catch (e) {
       console.warn('Backend user registration sync note:', e);
+    }
+
+    // Direct Firestore sync fallback (e.g. for Vercel deployment)
+    try {
+      const firestoreUser = await syncUserWithFirestore(firebaseUser, {
+        displayName: customDisplayName,
+      });
+      login(firestoreUser);
+      return;
+    } catch (fsErr) {
+      console.warn('Firestore sync note:', fsErr);
     }
 
     login({

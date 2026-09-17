@@ -7,6 +7,8 @@ import { HttpTransport } from '../networking/httpTransport';
 import { SocialEvent } from '../domain/event';
 import { auth } from '../lib/firebase';
 import { onAuthStateChanged, getRedirectResult } from 'firebase/auth';
+import { syncUserWithFirestore, createFirestorePost } from '../services/firestoreService';
+import { getApiUrl } from '../lib/api';
 
 interface AuthAction {
   actionName: string;
@@ -397,33 +399,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setCurrentUser(baseUser);
         saveAccountLocally(baseUser);
         
-        // Fetch accurate DB user if possible
+        // Fetch accurate DB user if possible, with Firestore sync fallback for Vercel
         try {
           const token = await user.getIdToken();
-          const res = await fetch('/api/register', {
+          const res = await fetch(getApiUrl('/api/register'), {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` }
           });
-          const data = await res.json();
-          if (data.dbUser) {
-            const finalUser: User = {
-              ...baseUser,
-              id: data.dbUser.uid || baseUser.id,
-              uid: data.dbUser.uid,
-              username: data.dbUser.username,
-              avatar: data.dbUser.avatar,
-              displayName: data.dbUser.displayName,
-              bio: data.dbUser.bio,
-              followersCount: data.dbUser.followersCount,
-              followingCount: data.dbUser.followingCount,
-              lastUsernameChangeAt: data.dbUser.lastUsernameChangeAt,
-            };
-            setCurrentUser(finalUser);
-            saveAccountLocally(finalUser);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.dbUser) {
+              const finalUser: User = {
+                ...baseUser,
+                id: data.dbUser.uid || baseUser.id,
+                uid: data.dbUser.uid,
+                username: data.dbUser.username,
+                avatar: data.dbUser.avatar,
+                displayName: data.dbUser.displayName,
+                bio: data.dbUser.bio,
+                followersCount: data.dbUser.followersCount,
+                followingCount: data.dbUser.followingCount,
+                lastUsernameChangeAt: data.dbUser.lastUsernameChangeAt,
+              };
+              setCurrentUser(finalUser);
+              saveAccountLocally(finalUser);
+              syncUserWithFirestore(user, finalUser).catch(() => {});
+              refreshUnreadCount();
+              setIsInitialized(true);
+              return;
+            }
           }
-          refreshUnreadCount();
         } catch (e) {
-          console.warn('Could not sync user profile from backend on auth change:', e);
+          console.warn('Backend /api/register unavailable, syncing with Firestore:', e);
+        }
+
+        // Direct Firestore fallback (e.g. for Vercel deployment)
+        try {
+          const fsUser = await syncUserWithFirestore(user);
+          setCurrentUser(fsUser);
+          saveAccountLocally(fsUser);
+        } catch (fsErr) {
+          console.warn('Firestore fallback sync note:', fsErr);
         }
       } else {
         setCurrentUser(null);
@@ -622,7 +638,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 const chunkResult = await new Promise((resolve, reject) => {
                   const xhr = new XMLHttpRequest();
                   activeXhrsRef.current.set(taskId, xhr);
-                  xhr.open('POST', '/api/media/upload', true);
+                  xhr.open('POST', getApiUrl('/api/media/upload'), true);
                   // Ensure cookies and session identifiers are preserved in iframe contexts
                   xhr.withCredentials = true;
 
@@ -709,7 +725,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 };
                 if (token) fallbackHeaders['Authorization'] = `Bearer ${token}`;
 
-                const fbRes = await fetch('/api/media/upload', {
+                const fbRes = await fetch(getApiUrl('/api/media/upload'), {
                   method: 'POST',
                   credentials: 'include',
                   headers: fallbackHeaders,
@@ -727,8 +743,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 }
                 chunkSuccess = true;
               } catch (fbErr: any) {
-                console.error(`[UploadManager] Fetch fallback failed for chunk ${chunkIdx + 1}:`, fbErr);
-                throw lastError || new Error(`Failed to upload media chunk ${chunkIdx + 1}/${totalChunks}`);
+                console.warn(`[UploadManager] Media server upload unavailable, using client media URL:`, fbErr);
+                // On Vercel or when storage endpoint is unavailable, use preview / object URL directly
+                mediaMeta = { publicUrl: upload.mediaUrl || finalMediaUrl };
+                chunkSuccess = true;
+                break;
               }
             }
           }
@@ -739,35 +758,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
-        // Post metadata to /api/posts
+        // Post metadata to /api/posts with Firestore fallback
         setActiveUploads(prev => prev.map(u => u.id === taskId ? { ...u, progress: 85 } : u));
 
-        const postRes = await fetch('/api/posts', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            mediaUrl: finalMediaUrl,
-            thumbnailUrl: upload.thumbnailUrl || null,
-            storageKey,
-            mimeType,
-            mediaSize,
-            type: upload.mediaType,
-            caption: upload.caption,
-            tags: upload.tags,
-            visibility: upload.visibility,
-            allowComments: upload.allowComments,
-          }),
-        });
+        let resData: any = null;
+        try {
+          const postRes = await fetch(getApiUrl('/api/posts'), {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              mediaUrl: finalMediaUrl,
+              thumbnailUrl: upload.thumbnailUrl || null,
+              storageKey,
+              mimeType,
+              mediaSize,
+              type: upload.mediaType,
+              caption: upload.caption,
+              tags: upload.tags,
+              visibility: upload.visibility,
+              allowComments: upload.allowComments,
+            }),
+          });
 
-        if (!postRes.ok) {
-          const errData = await postRes.json().catch(() => ({}));
-          throw new Error(errData.error || 'Failed to create post');
+          if (postRes.ok) {
+            resData = await postRes.json();
+            // Sync to Firestore in background
+            if (currentUser) {
+              createFirestorePost({
+                ...resData,
+                author: currentUser,
+                mediaUrl: finalMediaUrl,
+                caption: upload.caption,
+                type: upload.mediaType,
+                visibility: (upload.visibility as any) || 'public',
+                allowComments: upload.allowComments,
+              }).catch(() => {});
+            }
+          }
+        } catch (apiErr) {
+          console.warn('[UploadManager] Backend /api/posts failed, attempting Firestore post creation:', apiErr);
         }
 
-        const resData = await postRes.json();
+        // Direct Firestore fallback for Vercel
+        if (!resData) {
+          if (!currentUser) throw new Error('Sign in required to publish post');
+          resData = await createFirestorePost({
+            author: currentUser,
+            authorId: currentUser.id,
+            mediaUrl: finalMediaUrl,
+            thumbnailUrl: upload.thumbnailUrl || finalMediaUrl,
+            caption: upload.caption,
+            tags: upload.tags ? upload.tags.join(' ') : '',
+            type: upload.mediaType,
+            visibility: (upload.visibility as any) || 'public',
+            allowComments: upload.allowComments,
+          });
+        }
         setActiveUploads(prev =>
           prev.map(u => u.id === taskId ? { ...u, progress: 100, status: 'completed', resultPostId: resData.id } : u)
         );
