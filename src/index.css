@@ -1,19 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --omni-bg-base: #07080c;
-  --omni-bg-surface: #0f1118;
-  --omni-bg-elevated: #171923;
-  --omni-accent: #00f0ff;
-  --omni-accent-dark: #00bcd4;
-  --omni-secondary: #6366f1;
-  --omni-amber: #f59e0b;
-  --omni-text-primary: #f8fafc;
-  --omni-text-secondary: #94a3b8;
-  --omni-text-muted: #64748b;
-  --omni-border: rgba(255, 255, 255, 0.08);
-  --omni-border-subtle: rgba(255, 255, 255, 0.04);
-  --omni-border-accent: rgba(0, 240, 255, 0.35);
+  --omni-bg-base: #0b0b0a;
+  --omni-bg-surface: #151513;
+  --omni-bg-elevated: #1f1f1c;
+  --omni-accent: #ff6b4a;
+  --omni-accent-dark: #e65335;
+  --omni-secondary: #8aa8ff;
+  --omni-amber: #f3bd62;
+  --omni-text-primary: #f7f5f0;
+  --omni-text-secondary: #b7b2a8;
+  --omni-text-muted: #817c73;
+  --omni-border: rgba(247, 245, 240, 0.14);
+  --omni-border-subtle: rgba(247, 245, 240, 0.08);
+  --omni-border-accent: rgba(255, 107, 74, 0.42);
   --omni-radius-sm: 8px;
   --omni-radius-md: 14px;
   --omni-radius-lg: 20px;
@@ -37,9 +37,17 @@
     antialiased: true;
     overflow: hidden;
     overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button, nav, [role="button"] {
     user-select: none;
     -webkit-user-select: none;
-    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid #f7f5f0;
+    outline-offset: 3px;
   }
 }
 
@@ -51,36 +59,43 @@
     padding-top: env(safe-area-inset-top, 0.5rem);
   }
 
-  /* Hide scrollbar for Chrome, Safari and Opera */
   .hide-scrollbar::-webkit-scrollbar {
     display: none;
   }
 
-  /* Hide scrollbar for IE, Edge and Firefox */
   .hide-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
 
   .omni-glass {
-    background: rgba(15, 17, 24, 0.75);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(21, 21, 19, 0.86);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--omni-border-subtle);
   }
 
   .omni-glass-dense {
-    background: rgba(10, 12, 18, 0.9);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(11, 11, 10, 0.94);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid var(--omni-border);
   }
 
   .omni-glow-accent {
-    box-shadow: 0 0 20px rgba(0, 240, 255, 0.25);
+    box-shadow: none;
   }
 
   .omni-glow-amber {
-    box-shadow: 0 0 20px rgba(245, 158, 11, 0.25);
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

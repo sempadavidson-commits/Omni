@@ -19,9 +19,8 @@ import { Splash } from './components/Splash';
 
 function Layout() {
   return (
-    <div className="w-full h-[100dvh] bg-black flex justify-center overflow-hidden">
-      {/* Mobile constraint container for web preview */}
-      <div className="w-full h-full max-w-md relative bg-black shadow-2xl flex flex-col">
+    <div className="w-full h-[100dvh] bg-[#11110f] flex justify-center overflow-hidden">
+      <div className="w-full h-full max-w-[460px] relative bg-[#0b0b0a] border-x border-white/10 flex flex-col">
         <main className="flex-1 relative h-full min-h-0 overflow-hidden">
           <Routes>
             <Route path="/" element={<Home />} />
@@ -37,7 +36,6 @@ function Layout() {
             <Route path="/post/:id" element={<PostDetail />} />
             <Route path="/live" element={<Live />} />
             <Route path="/search" element={<Search />} />
-            <Route path="/settings" element={<Profile />} />
           </Routes>
         </main>
         

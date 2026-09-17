@@ -14,13 +14,13 @@ class ErrorBoundary extends Component<{children: ReactNode}, {hasError: boolean,
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ color: 'red', padding: '20px', backgroundColor: 'black', height: '100vh', overflow: 'auto' }}>
-          <h1>Something went wrong.</h1>
-          <pre style={{ whiteSpace: 'pre-wrap', fontSize: '12px' }}>
-            {this.state.error?.toString()}
-            <br />
-            {this.state.error?.stack}
-          </pre>
+        <div className="min-h-[100dvh] bg-[#0b0b0a] text-[#f7f5f0] flex items-center justify-center p-6">
+          <div className="w-full max-w-sm border border-white/15 rounded-2xl bg-[#151513] p-6 text-center">
+            <p className="text-xs uppercase tracking-[0.18em] text-[#ff8064] mb-3">Omni</p>
+            <h1 className="text-2xl font-semibold mb-2">Something went wrong</h1>
+            <p className="text-sm text-[#b7b2a8] mb-6">Your account and posts are safe. Reload the app to try again.</p>
+            <button onClick={() => window.location.reload()} className="w-full min-h-11 rounded-xl bg-[#f7f5f0] text-[#0b0b0a] font-semibold">Reload Omni</button>
+          </div>
         </div>
       );
     }
@@ -37,11 +37,10 @@ createRoot(document.getElementById('root')!).render(
 );
 
 // Register service worker for offline persistence and progressive web app capabilities
-if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch((err) => {
       console.warn('Service worker registration failed:', err);
     });
   });
 }
-
