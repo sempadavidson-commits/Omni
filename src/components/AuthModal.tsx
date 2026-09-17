@@ -4,6 +4,7 @@ import { useAppContext } from '../context/AppContext';
 import { auth, googleAuthProvider } from '../lib/firebase';
 import {
   signInWithPopup,
+  signInWithRedirect,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
@@ -100,12 +101,28 @@ export function AuthModal() {
       await syncBackendUser(result.user);
       closeAuthModal();
     } catch (err: any) {
-      console.error(err);
+      console.error('Google Sign-In error:', err);
       if (err.code === 'auth/popup-closed-by-user') {
         setIsSubmitting(false);
         return;
       }
-      setError(err.message || 'Failed to sign in with Google');
+      if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
+        try {
+          await signInWithRedirect(auth, googleAuthProvider);
+          return;
+        } catch (redirectErr: any) {
+          setError('Popup blocked and redirect failed. Please allow popups for this site.');
+          setIsSubmitting(false);
+          return;
+        }
+      }
+      if (err.code === 'auth/operation-not-allowed') {
+        setError('Google Sign-In is not enabled in Firebase Console. Enable it under Authentication > Sign-in method in project omni-e7851.');
+      } else if (err.code === 'auth/unauthorized-domain') {
+        setError('Domain not authorized in Firebase. Ensure omni-ebon-xi.vercel.app is added under Firebase Console > Authentication > Settings > Authorized domains.');
+      } else {
+        setError(err.message || 'Failed to sign in with Google');
+      }
       setIsSubmitting(false);
     }
   };
@@ -127,7 +144,9 @@ export function AuthModal() {
     } catch (err: any) {
       console.error(err);
       let msg = 'Failed to sign in. Please verify your credentials.';
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+      if (err.code === 'auth/operation-not-allowed') {
+        msg = 'Email/Password Sign-In is not enabled in Firebase Console. Enable it under Authentication > Sign-in method.';
+      } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         msg = 'Incorrect email or password. Please try again.';
       } else if (err.code === 'auth/invalid-email') {
         msg = 'Please enter a valid email address.';
@@ -162,7 +181,9 @@ export function AuthModal() {
     } catch (err: any) {
       console.error(err);
       let msg = 'Failed to create account.';
-      if (err.code === 'auth/email-already-in-use') {
+      if (err.code === 'auth/operation-not-allowed') {
+        msg = 'Email/Password Sign-In is not enabled in Firebase Console. Enable it under Authentication > Sign-in method.';
+      } else if (err.code === 'auth/email-already-in-use') {
         msg = 'An account with this email already exists. Sign in instead.';
       } else if (err.code === 'auth/weak-password') {
         msg = 'Password is too weak. Please use at least 6 characters.';
@@ -202,7 +223,13 @@ export function AuthModal() {
         try { (window as any).recaptchaVerifier.clear(); } catch {}
         (window as any).recaptchaVerifier = null;
       }
-      setError(err.message || 'Failed to send SMS OTP. Verify Phone Auth is enabled in Firebase Console.');
+      if (err.code === 'auth/operation-not-allowed') {
+        setError('Phone Sign-In is not enabled in Firebase Console. Enable it under Authentication > Sign-in method in project omni-e7851.');
+      } else if (err.code === 'auth/unauthorized-domain') {
+        setError('Domain not authorized for Phone Auth. Ensure omni-ebon-xi.vercel.app is listed in Firebase Console > Authentication > Settings > Authorized domains.');
+      } else {
+        setError(err.message || 'Failed to send SMS OTP. Verify Phone Auth is enabled in Firebase Console.');
+      }
       setIsSubmitting(false);
     }
   };

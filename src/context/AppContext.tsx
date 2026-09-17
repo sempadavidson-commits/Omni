@@ -6,7 +6,7 @@ import { globalSyncEngine } from '../sync/sync_engine';
 import { HttpTransport } from '../networking/httpTransport';
 import { SocialEvent } from '../domain/event';
 import { auth } from '../lib/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, getRedirectResult } from 'firebase/auth';
 
 interface AuthAction {
   actionName: string;
@@ -375,8 +375,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Listen to Firebase Auth
+  // Listen to Firebase Auth & process redirect results
   useEffect(() => {
+    getRedirectResult(auth).catch((err) => {
+      console.warn('Redirect sign-in error:', err);
+    });
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         // Create user session locally
